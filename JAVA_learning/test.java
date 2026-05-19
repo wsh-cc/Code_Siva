@@ -27,7 +27,7 @@ public class test {
         // System.out.println(name.charAt(0));// 获取字符串中指定位置的字符
         // System.out.println(name1);// 获取字符串长度
 
-        dynamicArry();
+        // dynamicArry();
     }
 
     public static void printhello(Integer n) {
@@ -109,8 +109,6 @@ public class test {
             }
         }
     }
-    public static void test01(){
-        int[][] arr =new int[3][4];//固定
-        int[][] b = new int[10][];//行数一定要定，这是动态数组，列数可以不定
-    }
+
+      
 }
