@@ -1,0 +1,17 @@
+<canvas id="test-canvas" width="1000" height="100"></canvas>
+
+<script>
+'use strict'
+
+var canvas = document.getElementById('test-canvas');
+var ctx = canvas.getContext('2d');
+
+ctx.clearRect(0, 0, canvas.width, canvas.height);
+ctx.shadowOffsetX = 2;
+ctx.shadowOffsetY = 2;
+ctx.shadowBlur = 2;
+ctx.shadowColor = '#666666';
+ctx.font = '24px Arial';
+ctx.fillStyle = '#333333';
+ctx.fillText('或许是不知名的缘故，流离之人追逐幻影~', 20, 80)
+</script>

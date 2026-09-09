@@ -1,7 +1,7 @@
 # 实验五：ECC 基本运算实现
 
 # 椭圆曲线参数：y^2 = x^3 + ax + b (mod p)
-p = 23
+p = 19
 a = 1
 b = 1
 
@@ -78,26 +78,38 @@ def scalar_mult(k, P):
 
     return result
 
-#首先验证点 P 是否在曲线上。
-P = (3, 10)
-print("P 是否在曲线上：", is_on_curve(P))
+## 首先验证点 P 是否在曲线上。
+# P = (2, 7)
+# print("P 是否在曲线上：", is_on_curve(P))
 
-#倍点运算验证
-P = (3, 10)
-R = point_add(P, P)
-print("2P =", R)
-print("2P 是否在曲线上：", is_on_curve(R))
+# #点加运算验证
+# P = (2, 7)
+# R = point_add(P, P)
+# print("2P =", R)
+# print("2P 是否在曲线上：", is_on_curve(R))
 
-#点加运算验证
-P = (3, 10)
-R2 = scalar_mult(2, P)
-R3 = scalar_mult(3, P)
-print("2P =", R2)
-print("3P =", R3)
-print("3P 是否在曲线上：", is_on_curve(R3))
+# #多倍点运算验证
+# P = (2, 7)
+# R2 = scalar_mult(2, P)
+# R3 = scalar_mult(3, P)
+# print("2P =", R2)
+# print("3P =", R3)
+# print("3P 是否在曲线上：", is_on_curve(R3))
 
-#多倍点运算结果验证
-P = (3, 10)
-for k in range(1, 10):
-    R = scalar_mult(k, P)
-    print(str(k) + "P =", R)
+# #多倍点运算结果验证
+# P = (3, 10)
+# for k in range(1, 10):
+#     R = scalar_mult(k, P)
+#     print(str(k) + "P =", R)
+
+def fun_y (x):
+    return (x**3 + x + 1) % 19
+
+
+for x in range(19):
+    y2 = fun_y(x)
+    for y in range(19):
+        if (y * y) % 19 == y2:
+            print("点 (", x, ",", y, ") 在曲线上")
+
+            

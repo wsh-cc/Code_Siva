@@ -1,0 +1,3 @@
+pymysql[rsa]>=1.1
+cryptography>=45.0.7,<47
+pytest>=8.0

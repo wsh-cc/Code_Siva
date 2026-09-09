@@ -55,4 +55,4 @@ def Fib(number):
 if __name__ == "__main__":
     fib_gen = fibonacci()
     fibs = [next(fib_gen) for _ in range(20)]#表示next(fib_gen)调用20次，获取前20个斐波那契数
-    print(fibs)  # 输出: [0, 1, 1, 2, 3, 5, 8, 13, 21, 34]
+    print(fibs)  # 输出: 

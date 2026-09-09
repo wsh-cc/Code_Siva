@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+
+database/*.db
+database/*.db-*
+database/uploads/
+database/env_check_uploads/
+
+.env
+*.log
+!requirements.txt

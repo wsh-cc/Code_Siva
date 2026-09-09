@@ -1,0 +1,33 @@
+<p id="test-res"></p>
+
+<script>
+'use strict'
+function success(text){
+    var textarea = document.getElementById('test-res');
+    textarea.innerHTML = text;
+}
+
+function fail(code){
+    var textarea = document.getElementById('test-res');
+    textarea.innerHTML = 'Error code:' + code;
+}
+
+var request = new XMLHttpRequest();
+
+request.onreadystatechange = function(){
+    if(request.readyState === 4){
+        if(request.status === 200){
+            return success(request.responseText);
+        } else {
+            return fail(request.status);
+        }
+    } else {
+
+    }
+}
+
+request.open('GET', 'http://127.0.0.1/');
+request.send();
+
+alert('请求已发送，请等待响应...');
+</script>
