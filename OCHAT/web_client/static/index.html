@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OCHAT</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main id="authView" class="auth-shell">
+      <section class="auth-card">
+        <div class="auth-brand">
+          <div class="auth-mark">O</div>
+          <h1>OCHAT</h1>
+          <p>更轻、更顺滑的在线聊天体验</p>
+        </div>
+        <div class="auth-tabs">
+          <button class="tab active" data-auth-tab="login">登录</button>
+          <button class="tab" data-auth-tab="register">注册</button>
+        </div>
+        <form id="loginForm" class="auth-form">
+          <label class="auth-field">
+            <span>用户名</span>
+            <input name="username" autocomplete="username" placeholder="输入你的账号" required />
+          </label>
+          <label class="auth-field">
+            <span>密码</span>
+            <span class="password-wrap">
+              <input name="password" type="password" autocomplete="current-password" placeholder="输入密码" required />
+              <button class="password-toggle" type="button" data-password-toggle aria-label="显示密码">显示</button>
+            </span>
+          </label>
+          <button id="loginSubmit" class="primary auth-submit" type="submit">
+            <span class="button-label">进入 OCHAT</span>
+            <span class="button-spinner" aria-hidden="true"></span>
+          </button>
+          <button id="configButton" class="soft auth-config" type="button">连接设置</button>
+        </form>
+        <form id="registerForm" class="auth-form hidden">
+          <label class="auth-field">
+            <span>用户名</span>
+            <input name="username" autocomplete="username" placeholder="3-20 位字母、数字或下划线" required />
+          </label>
+          <label class="auth-field">
+            <span>昵称</span>
+            <input name="nickname" placeholder="给自己一个好记的名字" />
+          </label>
+          <label class="auth-field">
+            <span>密码</span>
+            <span class="password-wrap">
+              <input name="password" type="password" autocomplete="new-password" placeholder="至少 6 位" required />
+              <button class="password-toggle" type="button" data-password-toggle aria-label="显示密码">显示</button>
+            </span>
+          </label>
+          <button id="registerSubmit" class="primary auth-submit" type="submit">
+            <span class="button-label">创建账号</span>
+            <span class="button-spinner" aria-hidden="true"></span>
+          </button>
+        </form>
+        <p id="authHint" class="hint" role="status" aria-live="polite"></p>
+      </section>
+    </main>
+
+    <main id="appView" class="app hidden">
+      <nav class="rail">
+        <button id="profileButton" class="avatar-button" title="个人资料"></button>
+        <button class="rail-button active" data-mode="chats">消息</button>
+        <button class="rail-button" data-mode="friends">好友</button>
+        <button class="rail-button" data-mode="groups">群聊</button>
+        <button class="rail-button" data-mode="requests">申请</button>
+        <span class="rail-spacer"></span>
+        <button id="refreshButton" class="rail-button">刷新</button>
+        <button id="logoutButton" class="rail-button danger">退出</button>
+      </nav>
+
+      <aside class="list-pane">
+        <div class="pane-head">
+          <div>
+            <h2 id="listTitle">消息</h2>
+            <p id="listSubtitle">保持连接，轻松沟通</p>
+          </div>
+          <button id="addButton" class="icon-button">+</button>
+        </div>
+        <input id="searchInput" class="search" placeholder="搜索" />
+        <div id="listActions" class="action-strip"></div>
+        <div id="itemList" class="item-list"></div>
+      </aside>
+
+      <section class="chat-pane">
+        <header class="chat-head">
+          <button id="sidebarToggleButton" class="sidebar-toggle" type="button" aria-label="展开或收起侧栏" aria-expanded="true">
+            <span aria-hidden="true"></span>
+          </button>
+          <div class="chat-title-block">
+            <h2 id="chatTitle">请选择会话</h2>
+            <p id="chatSubtitle">从左侧选择好友或群聊开始</p>
+          </div>
+          <div class="chat-actions">
+            <button id="directProfileButton" class="soft hidden">资料</button>
+            <button id="editFriendButton" class="soft hidden">改备注</button>
+            <button id="removeFriendButton" class="soft danger-action hidden">删除好友</button>
+            <button id="searchMessagesButton" class="soft hidden">搜索</button>
+            <button id="downloadFilesButton" class="soft hidden">保存文件</button>
+            <button id="recallButton" class="soft hidden">撤回</button>
+            <button id="groupPanelButton" class="soft hidden">群面板</button>
+          </div>
+        </header>
+        <div id="messages" class="messages empty">请选择一个会话开始聊天</div>
+        <footer class="composer">
+          <div class="toolbar">
+            <button id="emojiButton" class="tool">😊</button>
+            <button id="fileButton" class="tool">图片/文件</button>
+            <input id="fileInput" type="file" hidden />
+          </div>
+          <div id="emojiPanel" class="emoji-panel hidden"></div>
+          <div class="send-row">
+            <textarea id="messageInput" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
+            <button id="sendButton" class="primary send-button" type="button" aria-label="发送消息">
+              <span class="send-symbol" aria-hidden="true">↑</span>
+            </button>
+          </div>
+        </footer>
+      </section>
+    </main>
+
+    <dialog id="profileDialog" class="dialog">
+      <form id="profileForm" method="dialog">
+        <header class="dialog-head">
+          <h3>个人资料</h3>
+          <button class="ghost" value="cancel">关闭</button>
+        </header>
+        <div class="profile-grid">
+          <button id="avatarPicker" class="avatar-large" type="button"></button>
+          <input id="avatarInput" type="file" accept="image/png,image/gif,image/jpeg" hidden />
+          <div class="field-stack">
+            <label>UID<input name="uid" readonly /></label>
+            <label>用户名<input name="username" readonly /></label>
+            <label>昵称<input name="nickname" /></label>
+            <label>性别<select name="gender"><option>保密</option><option>男</option><option>女</option><option>其他</option></select></label>
+          </div>
+        </div>
+        <label>生日<input name="birthday" placeholder="YYYY-MM-DD" /></label>
+        <label>年龄<input name="age" type="number" min="0" max="150" /></label>
+        <label>联系方式<input name="contact" /></label>
+        <label>住址<input name="address" /></label>
+        <label>签名<textarea name="signature" rows="3"></textarea></label>
+        <footer class="dialog-actions">
+          <button id="clearAvatarButton" type="button" class="soft">清除头像</button>
+          <button type="submit" class="primary">保存资料</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog id="groupDialog" class="dialog wide">
+      <header class="dialog-head">
+        <div>
+          <h3 id="groupDialogTitle">群面板</h3>
+          <p id="groupDialogMeta"></p>
+        </div>
+        <button id="closeGroupDialog" class="ghost">关闭</button>
+      </header>
+      <div id="groupActions" class="action-strip"></div>
+      <div id="groupMembers" class="member-list"></div>
+    </dialog>
+
+    <dialog id="userDialog" class="dialog">
+      <header class="dialog-head">
+        <div>
+          <h3 id="userDialogTitle">个人资料</h3>
+          <p id="userDialogMeta"></p>
+        </div>
+        <button id="closeUserDialog" class="ghost">关闭</button>
+      </header>
+      <div class="profile-view">
+        <div id="userDialogAvatar" class="avatar-large"></div>
+        <div id="userDialogRows" class="detail-list"></div>
+      </div>
+    </dialog>
+
+    <dialog id="searchDialog" class="dialog wide">
+      <header class="dialog-head">
+        <div>
+          <h3>搜索结果</h3>
+          <p id="searchDialogMeta"></p>
+        </div>
+        <button id="closeSearchDialog" class="ghost">关闭</button>
+      </header>
+      <div id="searchResults" class="result-list"></div>
+    </dialog>
+
+    <dialog id="filesDialog" class="dialog wide">
+      <header class="dialog-head">
+        <div>
+          <h3>保存文件</h3>
+          <p id="filesDialogMeta"></p>
+        </div>
+        <button id="closeFilesDialog" class="ghost">关闭</button>
+      </header>
+      <div id="fileResults" class="result-list"></div>
+    </dialog>
+
+    <dialog id="configDialog" class="dialog">
+      <form id="configForm" method="dialog">
+        <header class="dialog-head">
+          <div>
+            <h3>连接设置</h3>
+            <p>设置浏览器客户端要连接的 OCHAT 服务端</p>
+          </div>
+          <button class="ghost" value="cancel">关闭</button>
+        </header>
+        <label>Host<input name="host" required /></label>
+        <label>Port<input name="port" type="number" min="1" max="65535" required /></label>
+        <footer class="dialog-actions">
+          <button type="submit" class="primary">保存设置</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <div id="toast" class="toast hidden"></div>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

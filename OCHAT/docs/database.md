@@ -1,68 +1,69 @@
 # 数据库说明
 
-OCHAT 正常运行时使用 MySQL。测试代码使用 SQLite 临时库，避免自动测试污染真实数据库。
+OCHAT 的数据库设计围绕一个问题展开：聊天过程中产生的数据怎么可靠地保存下来，并且在查询时能判断用户有没有权限访问。注册会产生用户数据，添加好友会产生关系数据，群聊会产生群和成员数据，聊天会产生消息数据，发送文件还会产生文件记录。
 
-## 默认连接配置
+项目正常运行时可以使用 MySQL。自动测试和临时演示时使用 SQLite，这样不会改动真实数据库，也方便快速重建环境。两种数据库使用同一套数据访问层，表结构脚本分别放在 `database/schema_mysql.sql` 和 `database/schema_sqlite.sql`。
 
-| Setting | Default |
-| --- | --- |
-| Host | `127.0.0.1` |
-| Port | `3306` |
-| User | `root` |
-| Password | empty |
-| Database | `ochat` |
+## 用户数据
 
-## 本机 MySQL 检查结果
+用户表保存账号和个人资料。账号部分包括用户名和密码哈希，资料部分包括昵称、头像、签名、联系方式、生日、性别、地址和年龄。
 
-当前机器上检测到：
+密码不会明文保存。注册时，服务端会把密码加随机盐后生成 PBKDF2-SHA256 摘要，再写入数据库。登录时，系统用同样的方式校验用户输入的密码。
 
-| 项目 | 值 |
-| --- | --- |
-| 服务名 | `MySQL97` |
-| 服务状态 | `Running` |
-| MySQL 服务程序 | `C:\Program Files\MySQL\MySQL Server 9.7\bin\mysqld.exe` |
-| MySQL 客户端 | `C:\Program Files\MySQL\MySQL Server 9.7\bin\mysql.exe` |
-| 配置文件/数据目录 | `E:\MySQL\ProgramData\my.ini` / `E:\MySQL\ProgramData\Data` |
+用户名设置了唯一约束，这样可以避免两个用户注册同一个账号。
 
-注意：`E:\MySQL\ProgramData\Data` 是 MySQL 数据目录，不是 Python 项目直接读写的目录。OCHAT 通过
-`127.0.0.1:3306` 连接正在运行的 MySQL 服务。
+## 好友关系
 
-## 启动服务端
+好友关系按“当前用户的视角”保存，而不是只存一条简单的关系。这样做主要是为了支持备注和分组。
 
-先安装依赖：
+比如同一个好友，在 Alice 这里可以备注为“同学”，在 Bob 那里可以备注为“项目成员”。因此 `friendships` 里会记录 `user_id`、`friend_id`、`remark` 和 `group_name`。添加好友成功时，服务端会创建双向关系，删除好友时也会同步删除双方关系。
 
-```powershell
-python -m pip install -r requirements.txt
-```
+好友申请单独保存在 `friend_requests` 表中。申请有 `pending`、`accepted`、`rejected` 三种状态，方便客户端展示待处理申请和历史处理结果。
 
-如果 root 有密码，启动服务端时传入密码：
+## 群聊数据
 
-```powershell
-python start_server.py --mysql-user root --mysql-password 你的MySQL密码 --mysql-database ochat
-```
+群聊拆成两部分保存：
 
-也可以用环境变量：
+- `chat_groups` 保存群本身，例如群名、群主和创建时间。
+- `group_members` 保存用户和群的关系，例如成员角色、群内昵称、个人群备注和加入时间。
 
-```powershell
-$env:OCHAT_DB_HOST="127.0.0.1"
-$env:OCHAT_DB_PORT="3306"
-$env:OCHAT_DB_USER="root"
-$env:OCHAT_DB_PASSWORD="your_password"
-$env:OCHAT_DB_NAME="ochat"
-python start_server.py
-```
+群角色用于权限控制。群主可以解散群、管理成员和调整角色；管理员可以处理部分成员管理操作；普通成员只能完成正常聊天和退出群聊。服务端处理群消息、邀请、移除成员时，都会先查群成员表确认权限。
 
-## 检查 MySQL
+群邀请保存在 `group_invitations` 表中。被邀请人同意后才会写入 `group_members`，这样可以避免用户被直接拉入群聊。
 
-可以手动运行：
+## 消息数据
 
-```powershell
-.\scripts\check_mysql.ps1
-```
+私聊和群聊消息都保存在 `messages` 表中。表里用 `conversation_type` 区分会话类型：
 
-脚本会调用 MySQL 自带的 `mysql.exe`，提示输入密码，然后执行版本检查并创建 `ochat` 数据库。
+- `direct` 表示私聊，此时 `target_id` 是接收用户编号。
+- `group` 表示群聊，此时 `target_id` 是群聊编号。
 
-## 表结构文件
+这样设计后，保存消息、读取历史记录、搜索消息和撤回消息可以共用大部分逻辑。服务端在查询历史记录时，会根据当前用户身份检查好友关系或群成员关系，避免用户读取不属于自己的消息。
 
-- MySQL 表结构：`database/schema_mysql.sql`
-- SQLite 测试表结构：`database/schema_sqlite.sql`
+未读状态没有直接写在消息表里，而是使用 `message_reads` 记录每个用户读过哪些消息。这样一条群消息可以对应多个成员的已读状态，也不会因为某个用户已读而影响其他用户。
+
+## 文件数据
+
+文件和图片不会直接写入数据库。服务端会把文件保存到 `database/uploads/`，数据库中的 `files` 表只记录元数据，包括上传者、原始文件名、实际存储名、文件大小、MIME 类型和上传时间。
+
+消息表通过 `file_id` 关联文件记录。用户下载文件时，服务端会检查当前用户是否能看到包含该文件的消息。这样可以避免只知道文件编号就随意下载文件。
+
+## 启动时的处理
+
+服务端启动后会创建 `ChatStorage` 对象，并根据启动参数选择 SQLite 或 MySQL。数据库访问层会读取对应的 schema 文件，保证需要的表和索引存在。
+
+MySQL 模式下，默认数据库名是 `ochat`，也可以通过启动参数指定。SQLite 模式下，数据库文件默认是 `database/ochat.db`。
+
+## 主要表
+
+- `users`：用户账号和个人资料。
+- `friendships`：好友关系、备注和分组。
+- `friend_requests`：好友申请。
+- `chat_groups`：群聊基本信息。
+- `group_members`：群成员、角色、群昵称和群备注。
+- `group_invitations`：群聊邀请。
+- `messages`：私聊和群聊消息。
+- `message_reads`：消息已读记录。
+- `files`：文件元数据。
+
+整体上，客户端不直接访问数据库。所有数据库操作都经过服务端处理，这样权限校验、异常处理和数据格式可以集中维护。

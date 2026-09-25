@@ -1,3 +1,5 @@
+-- OCHAT MySQL schema, used by normal runs.
+
 CREATE TABLE IF NOT EXISTS users (
     id INT PRIMARY KEY AUTO_INCREMENT,
     username VARCHAR(20) NOT NULL UNIQUE,
@@ -6,6 +8,10 @@ CREATE TABLE IF NOT EXISTS users (
     avatar VARCHAR(255) NOT NULL DEFAULT '',
     signature VARCHAR(120) NOT NULL DEFAULT '',
     contact VARCHAR(80) NOT NULL DEFAULT '',
+    birthday VARCHAR(20) NOT NULL DEFAULT '',
+    gender VARCHAR(16) NOT NULL DEFAULT '',
+    address VARCHAR(160) NOT NULL DEFAULT '',
+    age INT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -23,6 +29,21 @@ CREATE TABLE IF NOT EXISTS friendships (
     CONSTRAINT fk_friendships_friend FOREIGN KEY(friend_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS friend_requests (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    requester_id INT NOT NULL,
+    receiver_id INT NOT NULL,
+    message VARCHAR(240) NOT NULL DEFAULT '',
+    status ENUM('pending', 'accepted', 'rejected') NOT NULL DEFAULT 'pending',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    responded_at DATETIME NULL,
+    UNIQUE KEY uk_friend_requests_open (requester_id, receiver_id, status),
+    INDEX idx_friend_requests_receiver (receiver_id, status),
+    INDEX idx_friend_requests_requester (requester_id, status),
+    CONSTRAINT fk_friend_requests_requester FOREIGN KEY(requester_id) REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_friend_requests_receiver FOREIGN KEY(receiver_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS chat_groups (
     id INT PRIMARY KEY AUTO_INCREMENT,
     name VARCHAR(40) NOT NULL,
@@ -37,12 +58,31 @@ CREATE TABLE IF NOT EXISTS group_members (
     group_id INT NOT NULL,
     user_id INT NOT NULL,
     role VARCHAR(16) NOT NULL DEFAULT 'member',
+    role_order INT NOT NULL DEFAULT 0,
     alias VARCHAR(32) NOT NULL DEFAULT '',
+    group_remark VARCHAR(120) NOT NULL DEFAULT '',
     joined_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uk_group_members_pair (group_id, user_id),
     INDEX idx_group_members_user (user_id),
     CONSTRAINT fk_group_members_group FOREIGN KEY(group_id) REFERENCES chat_groups(id) ON DELETE CASCADE,
     CONSTRAINT fk_group_members_user FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS group_invitations (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    group_id INT NOT NULL,
+    inviter_id INT NOT NULL,
+    receiver_id INT NOT NULL,
+    message VARCHAR(240) NOT NULL DEFAULT '',
+    status ENUM('pending', 'accepted', 'rejected') NOT NULL DEFAULT 'pending',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    responded_at DATETIME NULL,
+    UNIQUE KEY uk_group_invitations_open (group_id, receiver_id, status),
+    INDEX idx_group_invitations_receiver (receiver_id, status),
+    INDEX idx_group_invitations_group (group_id, status),
+    CONSTRAINT fk_group_invitations_group FOREIGN KEY(group_id) REFERENCES chat_groups(id) ON DELETE CASCADE,
+    CONSTRAINT fk_group_invitations_inviter FOREIGN KEY(inviter_id) REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_group_invitations_receiver FOREIGN KEY(receiver_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS files (
@@ -72,4 +112,14 @@ CREATE TABLE IF NOT EXISTS messages (
     FULLTEXT INDEX idx_messages_content (content),
     CONSTRAINT fk_messages_sender FOREIGN KEY(sender_id) REFERENCES users(id) ON DELETE CASCADE,
     CONSTRAINT fk_messages_file FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS message_reads (
+    user_id INT NOT NULL,
+    message_id INT NOT NULL,
+    read_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(user_id, message_id),
+    INDEX idx_message_reads_message (message_id),
+    CONSTRAINT fk_message_reads_user FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_message_reads_message FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

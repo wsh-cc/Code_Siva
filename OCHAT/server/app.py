@@ -77,7 +77,7 @@ class ChatServer:
         self.server_socket: socket.socket | None = None
         self._stopped = threading.Event()
 
-    def serve_forever(self) -> None:
+    def serve_forever(self) -> None:#服务器核心
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             self.server_socket = sock
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -132,18 +132,32 @@ class ChatServer:
                 "users.search": self.handle_users_search,
                 "friends.list": self.handle_friends_list,
                 "friends.add": self.handle_friends_add,
+                "friends.request": self.handle_friends_request,
+                "friends.requests.list": self.handle_friend_requests_list,
+                "friends.requests.respond": self.handle_friend_requests_respond,
                 "friends.update": self.handle_friends_update,
                 "friends.remove": self.handle_friends_remove,
+                "conversations.list": self.handle_conversations_list,
                 "groups.list": self.handle_groups_list,
                 "groups.create": self.handle_groups_create,
                 "groups.invite": self.handle_groups_invite,
+                "groups.invite.request": self.handle_groups_invite_request,
+                "groups.invitations.list": self.handle_group_invitations_list,
+                "groups.invitations.respond": self.handle_group_invitations_respond,
                 "groups.remove_member": self.handle_groups_remove_member,
                 "groups.members": self.handle_groups_members,
+                "groups.member_role.update": self.handle_groups_member_role_update,
+                "groups.member_alias.update": self.handle_groups_member_alias_update,
+                "groups.remark.update": self.handle_groups_remark_update,
+                "groups.rename": self.handle_groups_rename,
+                "groups.leave": self.handle_groups_leave,
+                "groups.dismiss": self.handle_groups_dismiss,
                 "messages.direct.send": self.handle_direct_send,
                 "messages.group.send": self.handle_group_send,
                 "messages.direct.history": self.handle_direct_history,
                 "messages.group.history": self.handle_group_history,
                 "messages.search": self.handle_message_search,
+                "messages.read": self.handle_messages_read,
                 "messages.recall": self.handle_message_recall,
                 "files.download": self.handle_file_download,
                 "files.upload": self.handle_file_upload,
@@ -186,7 +200,14 @@ class ChatServer:
         if not user:
             raise PermissionError("invalid username or password")
         self.register_session(session, user)
-        return ok(user=user, token=session.token, friends=self.friends_payload(user["id"]), groups=self.storage.list_groups(user["id"]))
+        return ok(
+            user=user,
+            token=session.token,
+            friends=self.friends_payload(user["id"]),
+            groups=self.groups_payload(user["id"]),
+            conversations=self.conversations_payload(user["id"]),
+            requests=self.requests_payload(user["id"]),
+        )
 
     def handle_resume(self, session: ClientSession, packet: dict[str, Any]) -> dict[str, Any]:
         token = str(packet.get("token", ""))
@@ -196,7 +217,14 @@ class ChatServer:
             raise PermissionError("invalid session token")
         user = self.storage.get_user_by_id(user_id)
         self.register_session(session, user, token)
-        return ok(user=user, token=token, friends=self.friends_payload(user_id), groups=self.storage.list_groups(user_id))
+        return ok(
+            user=user,
+            token=token,
+            friends=self.friends_payload(user_id),
+            groups=self.groups_payload(user_id),
+            conversations=self.conversations_payload(user_id),
+            requests=self.requests_payload(user_id),
+        )
 
     def handle_logout(self, session: ClientSession, packet: dict[str, Any]) -> dict[str, Any]:
         self.unregister_session(session, forget_token=True)
@@ -208,6 +236,10 @@ class ChatServer:
         signature = str(packet.get("signature", "")).strip()
         contact = str(packet.get("contact", "")).strip()
         avatar = str(packet.get("avatar", "")).strip()
+        birthday = str(packet.get("birthday", "")).strip()
+        gender = str(packet.get("gender", "")).strip()
+        address = str(packet.get("address", "")).strip()
+        age = self._optional_int(packet.get("age"))
         if not validate_display_text(nickname, 32):
             raise ValueError("nickname is too long")
         if not validate_display_text(signature, 120):
@@ -216,9 +248,22 @@ class ChatServer:
             raise ValueError("contact is too long")
         if not validate_display_text(avatar, 255):
             raise ValueError("avatar is too long")
-        updated = self.storage.update_profile(user["id"], nickname, signature, contact, avatar)
+        if not validate_display_text(birthday, 20):
+            raise ValueError("birthday is too long")
+        if not validate_display_text(gender, 16):
+            raise ValueError("gender is too long")
+        if gender and gender not in {"保密", "男", "女", "其他"}:
+            raise ValueError("gender must be one of: 保密, 男, 女, 其他")
+        if not validate_display_text(address, 160):
+            raise ValueError("address is too long")
+        if age is not None and not 0 <= age <= 150:
+            raise ValueError("age must be between 0 and 150")
+        updated = self.storage.update_profile(user["id"], nickname, signature, contact, avatar, birthday, gender, address, age)
         session.user = updated
         self.broadcast_to_user(user["id"], "profile.updated", user=updated)
+        friend_ids = {int(friend["id"]) for friend in self.storage.list_friends(user["id"])}
+        for friend_id in friend_ids:
+            self.broadcast_state(friend_id, "friends.updated", include_groups=False)
         return ok(user=updated)
 
     def handle_users_search(self, session: ClientSession, packet: dict[str, Any]) -> dict[str, Any]:
@@ -246,9 +291,43 @@ class ChatServer:
         if not validate_display_text(group_name, 32):
             raise ValueError("group name is too long")
         friend = self.storage.add_friend(user["id"], friend_username, remark, group_name)
-        self.broadcast_to_user(user["id"], "friends.updated", friends=self.friends_payload(user["id"]))
-        self.broadcast_to_user(friend["id"], "friends.updated", friends=self.friends_payload(friend["id"]))
+        self.broadcast_state(user["id"], "friends.updated", include_groups=False)
+        self.broadcast_state(friend["id"], "friends.updated", include_groups=False)
         return ok(friend=friend)
+
+    def handle_friends_request(self, session: ClientSession, packet: dict[str, Any]) -> dict[str, Any]:
+        user = session.require_user()
+        username = str(packet.get("username", "")).strip()
+        message = str(packet.get("message", "")).strip()
+        if not validate_username(username):
+            raise ValueError("invalid friend username")
+        if not validate_display_text(message, 240):
+            raise ValueError("request message is too long")
+        request = self.storage.create_friend_request(user["id"], username, message)
+        self.broadcast_requests_state({int(request["requester_id"]), int(request["receiver_id"])})
+        return ok(friend_request=request)
+
+    def handle_friend_requests_list(self, session: ClientSession, packet: dict[str, Any]) -> dict[str, Any]:
+        user = session.require_user()
+        return ok(requests=self.requests_payload(user["id"]))
+
+    def handle_friend_requests_respond(self, session: ClientSession, packet: dict[str, Any]) -> dict[str, Any]:
+        user = session.require_user()
+        request_id = int(packet.get("friend_request_id", packet.get("request_id", 0)))
+        accept = bool(packet.get("accept", False))
+        remark = str(packet.get("remark", "")).strip()
+        group_name = str(packet.get("group_name", "Friends")).strip() or "Friends"
+        if not validate_display_text(remark, 32):
+            raise ValueError("remark is too long")
+        if not validate_display_text(group_name, 32):
+            raise ValueError("group name is too long")
+        request = self.storage.respond_friend_request(user["id"], request_id, accept, remark, group_name)
+        affected = {int(request["requester_id"]), int(request["receiver_id"])}
+        self.broadcast_requests_state(affected)
+        if accept:
+            for user_id in affected:
+                self.broadcast_state(user_id, "friends.updated", include_groups=False)
+        return ok(friend_request=request)
 
     def handle_friends_update(self, session: ClientSession, packet: dict[str, Any]) -> dict[str, Any]:
         user = session.require_user()
@@ -260,7 +339,7 @@ class ChatServer:
         if not validate_display_text(group_name, 32):
             raise ValueError("group name is too long")
         friend = self.storage.update_friend(user["id"], friend_id, remark, group_name)
-        self.broadcast_to_user(user["id"], "friends.updated", friends=self.friends_payload(user["id"]))
+        self.broadcast_state(user["id"], "friends.updated", include_groups=False)
         return ok(friend=friend)
 
     def handle_friends_remove(self, session: ClientSession, packet: dict[str, Any]) -> dict[str, Any]:
@@ -268,13 +347,17 @@ class ChatServer:
         friend_id = int(packet.get("friend_id", 0))
         friend = self.storage.get_friend(user["id"], friend_id)
         self.storage.remove_friend(user["id"], friend_id)
-        self.broadcast_to_user(user["id"], "friends.updated", friends=self.friends_payload(user["id"]))
-        self.broadcast_to_user(friend["id"], "friends.updated", friends=self.friends_payload(friend["id"]))
+        self.broadcast_state(user["id"], "friends.updated", include_groups=False)
+        self.broadcast_state(friend["id"], "friends.updated", include_groups=False)
         return ok()
+
+    def handle_conversations_list(self, session: ClientSession, packet: dict[str, Any]) -> dict[str, Any]:
+        user = session.require_user()
+        return ok(conversations=self.conversations_payload(user["id"]))
 
     def handle_groups_list(self, session: ClientSession, packet: dict[str, Any]) -> dict[str, Any]:
         user = session.require_user()
-        return ok(groups=self.storage.list_groups(user["id"]))
+        return ok(groups=self.groups_payload(user["id"]))
 
     def handle_groups_create(self, session: ClientSession, packet: dict[str, Any]) -> dict[str, Any]:
         user = session.require_user()
@@ -282,7 +365,7 @@ class ChatServer:
         if not 1 <= len(name) <= 40:
             raise ValueError("group name must be 1-40 characters")
         group = self.storage.create_group(user["id"], name)
-        self.broadcast_to_user(user["id"], "groups.updated", groups=self.storage.list_groups(user["id"]))
+        self.broadcast_state(user["id"], "groups.updated", include_friends=False)
         return ok(group=group)
 
     def handle_groups_invite(self, session: ClientSession, packet: dict[str, Any]) -> dict[str, Any]:
@@ -293,22 +376,111 @@ class ChatServer:
             raise ValueError("invalid username")
         group = self.storage.invite_group_member(group_id, user["id"], username)
         for member_id in self.storage.group_member_ids(group_id):
-            self.broadcast_to_user(member_id, "groups.updated", groups=self.storage.list_groups(member_id))
+            self.broadcast_state(member_id, "groups.updated", include_friends=False)
         return ok(group=group, members=self.storage.list_group_members(group_id, user["id"]))
+
+    def handle_groups_invite_request(self, session: ClientSession, packet: dict[str, Any]) -> dict[str, Any]:
+        user = session.require_user()
+        group_id = int(packet.get("group_id", 0))
+        username = str(packet.get("username", "")).strip()
+        message = str(packet.get("message", "")).strip()
+        if not validate_username(username):
+            raise ValueError("invalid username")
+        if not validate_display_text(message, 240):
+            raise ValueError("invitation message is too long")
+        invitation = self.storage.create_group_invitation(group_id, user["id"], username, message)
+        self.broadcast_requests_state({int(invitation["inviter_id"]), int(invitation["receiver_id"])})
+        return ok(invitation=invitation)
+
+    def handle_group_invitations_list(self, session: ClientSession, packet: dict[str, Any]) -> dict[str, Any]:
+        user = session.require_user()
+        return ok(requests=self.requests_payload(user["id"]))
+
+    def handle_group_invitations_respond(self, session: ClientSession, packet: dict[str, Any]) -> dict[str, Any]:
+        user = session.require_user()
+        invitation_id = int(packet.get("invitation_id", 0))
+        accept = bool(packet.get("accept", False))
+        invitation = self.storage.respond_group_invitation(user["id"], invitation_id, accept)
+        affected = {int(invitation["inviter_id"]), int(invitation["receiver_id"])}
+        self.broadcast_requests_state(affected)
+        if accept:
+            group_id = int(invitation["group_id"])
+            for member_id in self.storage.group_member_ids(group_id):
+                self.broadcast_state(member_id, "groups.updated", include_friends=False)
+        return ok(invitation=invitation)
 
     def handle_groups_remove_member(self, session: ClientSession, packet: dict[str, Any]) -> dict[str, Any]:
         user = session.require_user()
         group_id = int(packet.get("group_id", 0))
         member_id = int(packet.get("member_id", 0))
+        before = set(self.storage.group_member_ids(group_id))
         self.storage.remove_group_member(group_id, user["id"], member_id)
-        for uid in {user["id"], member_id, *self.storage.group_member_ids(group_id)}:
-            self.broadcast_to_user(uid, "groups.updated", groups=self.storage.list_groups(uid))
+        self.broadcast_group_state(before | {user["id"], member_id}, group_id)
         return ok()
 
     def handle_groups_members(self, session: ClientSession, packet: dict[str, Any]) -> dict[str, Any]:
         user = session.require_user()
         group_id = int(packet.get("group_id", 0))
-        return ok(members=self.storage.list_group_members(group_id, user["id"]))
+        group = self.storage.get_group(group_id, user["id"])
+        return ok(group=group, members=self.storage.list_group_members(group_id, user["id"]))
+
+    def handle_groups_member_role_update(self, session: ClientSession, packet: dict[str, Any]) -> dict[str, Any]:
+        user = session.require_user()
+        group_id = int(packet.get("group_id", 0))
+        member_id = int(packet.get("member_id", 0))
+        role = str(packet.get("role", "")).strip()
+        member = self.storage.update_group_member_role(group_id, user["id"], member_id, role)
+        self.broadcast_group_state(set(self.storage.group_member_ids(group_id)), group_id)
+        return ok(member=member)
+
+    def handle_groups_member_alias_update(self, session: ClientSession, packet: dict[str, Any]) -> dict[str, Any]:
+        user = session.require_user()
+        group_id = int(packet.get("group_id", 0))
+        member_id = int(packet.get("member_id", 0))
+        alias = str(packet.get("alias", "")).strip()
+        if not validate_display_text(alias, 32):
+            raise ValueError("group nickname is too long")
+        member = self.storage.update_group_member_alias(group_id, user["id"], member_id, alias)
+        self.broadcast_group_state(set(self.storage.group_member_ids(group_id)), group_id)
+        return ok(member=member)
+
+    def handle_groups_remark_update(self, session: ClientSession, packet: dict[str, Any]) -> dict[str, Any]:
+        user = session.require_user()
+        group_id = int(packet.get("group_id", 0))
+        group_remark = str(packet.get("group_remark", packet.get("remark", ""))).strip()
+        if not validate_display_text(group_remark, 120):
+            raise ValueError("group remark is too long")
+        group = self.storage.update_group_remark(group_id, user["id"], group_remark)
+        self.broadcast_state(user["id"], "groups.updated", include_friends=False)
+        return ok(group=group)
+
+    def handle_groups_rename(self, session: ClientSession, packet: dict[str, Any]) -> dict[str, Any]:
+        user = session.require_user()
+        group_id = int(packet.get("group_id", 0))
+        name = str(packet.get("name", "")).strip()
+        if not 1 <= len(name) <= 40:
+            raise ValueError("group name must be 1-40 characters")
+        if not validate_display_text(name, 40):
+            raise ValueError("group name is too long")
+        group = self.storage.rename_group(group_id, user["id"], name)
+        self.broadcast_group_state(set(self.storage.group_member_ids(group_id)), group_id)
+        return ok(group=group)
+
+    def handle_groups_leave(self, session: ClientSession, packet: dict[str, Any]) -> dict[str, Any]:
+        user = session.require_user()
+        group_id = int(packet.get("group_id", 0))
+        before = set(self.storage.group_member_ids(group_id))
+        group = self.storage.leave_group(group_id, user["id"])
+        self.broadcast_group_state(before | {user["id"]}, group_id)
+        return ok(group=group)
+
+    def handle_groups_dismiss(self, session: ClientSession, packet: dict[str, Any]) -> dict[str, Any]:
+        user = session.require_user()
+        group_id = int(packet.get("group_id", 0))
+        before = set(self.storage.group_member_ids(group_id))
+        self.storage.dismiss_group(group_id, user["id"])
+        self.broadcast_group_state(before | {user["id"]}, group_id)
+        return ok()
 
     def handle_direct_send(self, session: ClientSession, packet: dict[str, Any]) -> dict[str, Any]:
         user = session.require_user()
@@ -321,6 +493,7 @@ class ChatServer:
         message = self.storage.save_direct_message(user["id"], receiver_id, content, message_type, file_id)
         self.broadcast_to_user(user["id"], "message.new", message=message)
         self.broadcast_to_user(receiver_id, "message.new", message=message)
+        self.broadcast_unread_state({user["id"], receiver_id})
         return ok(message=message)
 
     def handle_group_send(self, session: ClientSession, packet: dict[str, Any]) -> dict[str, Any]:
@@ -332,21 +505,40 @@ class ChatServer:
         if not validate_message(message_type, content, file_id):
             raise ValueError("invalid message content")
         message = self.storage.save_group_message(user["id"], group_id, content, message_type, file_id)
-        for member_id in self.storage.group_member_ids(group_id):
+        member_ids = self.storage.group_member_ids(group_id)
+        for member_id in member_ids:
             self.broadcast_to_user(member_id, "message.new", message=message)
+        self.broadcast_unread_state(set(member_ids))
         return ok(message=message)
 
     def handle_direct_history(self, session: ClientSession, packet: dict[str, Any]) -> dict[str, Any]:
         user = session.require_user()
         friend_id = int(packet.get("friend_id", 0))
         limit = self._limit(packet.get("limit", 100))
-        return ok(messages=self.storage.list_direct_history(user["id"], friend_id, limit))
+        messages = self.storage.list_direct_history(user["id"], friend_id, limit)
+        changed = self.storage.mark_conversation_read(user["id"], "direct", friend_id)
+        if changed:
+            self.broadcast_unread_state({user["id"]})
+        return ok(messages=messages)
 
     def handle_group_history(self, session: ClientSession, packet: dict[str, Any]) -> dict[str, Any]:
         user = session.require_user()
         group_id = int(packet.get("group_id", 0))
         limit = self._limit(packet.get("limit", 100))
-        return ok(messages=self.storage.list_group_history(user["id"], group_id, limit))
+        messages = self.storage.list_group_history(user["id"], group_id, limit)
+        changed = self.storage.mark_conversation_read(user["id"], "group", group_id)
+        if changed:
+            self.broadcast_unread_state({user["id"]})
+        return ok(messages=messages)
+
+    def handle_messages_read(self, session: ClientSession, packet: dict[str, Any]) -> dict[str, Any]:
+        user = session.require_user()
+        conversation_type = str(packet.get("conversation_type", "")).strip()
+        target_id = int(packet.get("target_id", 0))
+        changed = self.storage.mark_conversation_read(user["id"], conversation_type, target_id)
+        if changed:
+            self.broadcast_unread_state({user["id"]})
+        return ok(read_count=changed)
 
     def handle_message_search(self, session: ClientSession, packet: dict[str, Any]) -> dict[str, Any]:
         user = session.require_user()
@@ -465,7 +657,102 @@ class ChatServer:
         online_ids = self.online_user_ids()
         for friend in friends:
             friend["online"] = friend["id"] in online_ids
+            friend["unread_count"] = self.storage.direct_unread_count(user_id, int(friend["id"]))
         return friends
+
+    def groups_payload(self, user_id: int) -> list[dict[str, Any]]:
+        groups = self.storage.list_groups(user_id)
+        for group in groups:
+            group["unread_count"] = self.storage.group_unread_count(user_id, int(group["id"]))
+        return groups
+
+    def broadcast_unread_state(self, user_ids: set[int]) -> None:
+        for user_id in user_ids:
+            self.broadcast_state(user_id, "unread.updated")
+
+    def broadcast_state(self, user_id: int, action: str, *, include_friends: bool = True, include_groups: bool = True) -> None:
+        payload: dict[str, Any] = {"conversations": self.conversations_payload(user_id)}
+        if include_friends:
+            payload["friends"] = self.friends_payload(user_id)
+        if include_groups:
+            payload["groups"] = self.groups_payload(user_id)
+        self.broadcast_to_user(user_id, action, **payload)
+
+    def broadcast_group_state(self, user_ids: set[int], group_id: int) -> None:
+        current_members = set(self.storage.group_member_ids(group_id))
+        for user_id in user_ids | current_members:
+            self.broadcast_state(user_id, "groups.updated", include_friends=False)
+
+    def requests_payload(self, user_id: int) -> dict[str, Any]:
+        friend_requests = self.storage.list_friend_requests(user_id)
+        group_invitations = self.storage.list_group_invitations(user_id)
+        incoming_count = len(friend_requests["incoming"]) + len(group_invitations["incoming"])
+        outgoing_count = len(friend_requests["outgoing"]) + len(group_invitations["outgoing"])
+        return {
+            "friend_requests": friend_requests,
+            "group_invitations": group_invitations,
+            "incoming_count": incoming_count,
+            "outgoing_count": outgoing_count,
+        }
+
+    def broadcast_requests_state(self, user_ids: set[int]) -> None:
+        for user_id in user_ids:
+            self.broadcast_to_user(user_id, "requests.updated", requests=self.requests_payload(user_id))
+
+    def conversations_payload(self, user_id: int) -> list[dict[str, Any]]:
+        conversations: list[dict[str, Any]] = []
+        for friend in self.friends_payload(user_id):
+            friend_id = int(friend["id"])
+            history = self.storage.list_direct_history(user_id, friend_id, limit=1)
+            last_message = history[-1] if history else None
+            title = friend.get("remark") or friend.get("nickname") or friend.get("username")
+            conversations.append(
+                {
+                    "conversation_type": "direct",
+                    "target_id": friend_id,
+                    "title": title,
+                    "subtitle": "在线" if friend.get("online") else "离线",
+                    "preview": self.message_preview(last_message),
+                    "updated_at": (last_message or friend).get("created_at", ""),
+                    "unread_count": friend.get("unread_count", 0),
+                    "online": bool(friend.get("online")),
+                    "peer": friend,
+                }
+            )
+        for group in self.groups_payload(user_id):
+            group_id = int(group["id"])
+            history = self.storage.list_group_history(user_id, group_id, limit=1)
+            last_message = history[-1] if history else None
+            member_count = len(self.storage.group_member_ids(group_id))
+            title = group.get("group_remark") or group["name"]
+            subtitle_prefix = f"群名：{group['name']} · " if group.get("group_remark") else ""
+            conversations.append(
+                {
+                    "conversation_type": "group",
+                    "target_id": group_id,
+                    "title": title,
+                    "subtitle": f"{subtitle_prefix}{member_count} 人群聊 · {group.get('my_role', 'member')}",
+                    "preview": self.message_preview(last_message),
+                    "updated_at": (last_message or group).get("created_at", ""),
+                    "unread_count": group.get("unread_count", 0),
+                    "online": False,
+                    "group": group,
+                }
+            )
+        return sorted(conversations, key=lambda item: str(item.get("updated_at", "")), reverse=True)
+
+    @staticmethod
+    def message_preview(message: dict[str, Any] | None) -> str:
+        if not message:
+            return "暂无消息"
+        if message.get("status") == "recalled":
+            return "消息已撤回"
+        if message.get("message_type") == "image":
+            return f"[图片] {message.get('file_name') or ''}".strip()
+        if message.get("message_type") == "file":
+            return f"[文件] {message.get('file_name') or ''}".strip()
+        content = str(message.get("content", "")).replace("\n", " ").strip()
+        return content[:40] + ("..." if len(content) > 40 else "")
 
     def online_user_ids(self) -> set[int]:
         with self.sessions_lock:
@@ -478,7 +765,12 @@ class ChatServer:
         for session in sessions:
             try:
                 user = session.require_user()
-                session.send("presence", online_user_ids=online_ids, friends=self.friends_payload(user["id"]))
+                session.send(
+                    "presence",
+                    online_user_ids=online_ids,
+                    friends=self.friends_payload(user["id"]),
+                    conversations=self.conversations_payload(user["id"]),
+                )
             except Exception:
                 LOGGER.debug("failed to broadcast presence", exc_info=True)
 
@@ -496,7 +788,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the OCHAT server.")
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", default=DEFAULT_PORT, type=int)
-    parser.add_argument("--db-backend", choices=("mysql", "sqlite"), default="mysql")
+    parser.add_argument("--db-backend", choices=("mysql", "sqlite"), default="sqlite")
     parser.add_argument("--db", default=str(Path("database") / "ochat.db"), help="SQLite database path when --db-backend sqlite")
     parser.add_argument("--mysql-host", default=None)
     parser.add_argument("--mysql-port", default=None, type=int)
@@ -522,7 +814,10 @@ def main() -> None:
         }.items()
         if value is not None
     }
-    print(f"Starting OCHAT server on {args.host}:{args.port} using {args.db_backend}...", flush=True)
+    if args.db_backend == "sqlite":
+        print(f"Starting OCHAT server on {args.host}:{args.port} using sqlite database {args.db}...", flush=True)
+    else:
+        print(f"Starting OCHAT server on {args.host}:{args.port} using mysql...", flush=True)
     try:
         server = ChatServer(
             args.host,

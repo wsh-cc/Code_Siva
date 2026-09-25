@@ -15,7 +15,7 @@ class ProtocolError(Exception):
     """Raised when a peer sends invalid protocol data."""
 
 
-def send_packet(sock: socket.socket, action: str, **payload: Any) -> None:
+def send_packet(sock: socket.socket, action: str, **payload: Any) -> None:#
     packet = {"action": action, **payload}
     encoded = json.dumps(packet, ensure_ascii=False).encode("utf-8") + b"\n"
     sock.sendall(encoded)
@@ -28,7 +28,7 @@ class LineReader:
 
     def read_packet(self) -> dict[str, Any] | None:
         while b"\n" not in self.buffer:
-            chunk = self.sock.recv(4096)
+            chunk = self.sock.recv(4096)#
             if not chunk:
                 if self.buffer:
                     raise ProtocolError("connection closed during packet")

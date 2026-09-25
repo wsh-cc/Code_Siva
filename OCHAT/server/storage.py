@@ -137,7 +137,54 @@ class ChatStorage:
                         cursor.execute(statement)
                     finally:
                         cursor.close()
+            self._ensure_user_profile_columns()
+            self._ensure_group_member_columns()
             self.conn.commit()
+
+    def _ensure_user_profile_columns(self) -> None:
+        columns = {
+            "birthday": "VARCHAR(20) NOT NULL DEFAULT ''" if self.backend == "mysql" else "TEXT NOT NULL DEFAULT ''",
+            "gender": "VARCHAR(16) NOT NULL DEFAULT ''" if self.backend == "mysql" else "TEXT NOT NULL DEFAULT ''",
+            "address": "VARCHAR(160) NOT NULL DEFAULT ''" if self.backend == "mysql" else "TEXT NOT NULL DEFAULT ''",
+            "age": "INT NULL" if self.backend == "mysql" else "INTEGER",
+        }
+        existing = set(self._table_columns("users"))
+        for name, definition in columns.items():
+            if name in existing:
+                continue
+            cursor = self.conn.cursor()
+            try:
+                cursor.execute(self._sql(f"ALTER TABLE users ADD COLUMN {name} {definition}"))
+            finally:
+                cursor.close()
+
+    def _ensure_group_member_columns(self) -> None:
+        columns = {
+            "role_order": "INT NOT NULL DEFAULT 0" if self.backend == "mysql" else "INTEGER NOT NULL DEFAULT 0",
+            "alias": "VARCHAR(32) NOT NULL DEFAULT ''" if self.backend == "mysql" else "TEXT NOT NULL DEFAULT ''",
+            "group_remark": "VARCHAR(120) NOT NULL DEFAULT ''" if self.backend == "mysql" else "TEXT NOT NULL DEFAULT ''",
+        }
+        existing = set(self._table_columns("group_members"))
+        for name, definition in columns.items():
+            if name in existing:
+                continue
+            cursor = self.conn.cursor()
+            try:
+                cursor.execute(self._sql(f"ALTER TABLE group_members ADD COLUMN {name} {definition}"))
+            finally:
+                cursor.close()
+
+    def _table_columns(self, table_name: str) -> list[str]:
+        cursor = self.conn.cursor()
+        try:
+            if self.backend == "mysql":
+                cursor.execute(f"SHOW COLUMNS FROM `{table_name}`")
+                rows = cursor.fetchall()
+                return [str(row["Field"] if isinstance(row, dict) else row[0]) for row in rows]
+            cursor.execute(f"PRAGMA table_info({table_name})")
+            return [str(row["name"] if isinstance(row, sqlite3.Row) else row[1]) for row in cursor.fetchall()]
+        finally:
+            cursor.close()
 
     def _split_sql(self, script: str) -> Iterable[str]:
         for statement in script.split(";"):
@@ -257,15 +304,21 @@ class ChatStorage:
         signature: str,
         contact: str,
         avatar: str,
+        birthday: str = "",
+        gender: str = "",
+        address: str = "",
+        age: int | None = None,
     ) -> dict[str, Any]:
         with self._lock:
             cursor = self._execute(
                 """
                 UPDATE users
-                SET nickname = ?, signature = ?, contact = ?, avatar = ?, updated_at = CURRENT_TIMESTAMP
+                SET nickname = ?, signature = ?, contact = ?, avatar = ?,
+                    birthday = ?, gender = ?, address = ?, age = ?,
+                    updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
-                (nickname, signature, contact, avatar, user_id),
+                (nickname, signature, contact, avatar, birthday, gender, address, age, user_id),
             )
             cursor.close()
             self.conn.commit()
@@ -310,6 +363,7 @@ class ChatStorage:
         row = self._fetchone(
             """
             SELECT u.id, u.username, u.nickname, u.signature, u.contact, u.avatar,
+                   u.birthday, u.gender, u.address, u.age,
                    f.remark, f.group_name, f.created_at
             FROM friendships f
             JOIN users u ON u.id = f.friend_id
@@ -325,6 +379,7 @@ class ChatStorage:
         return self._fetchall(
             """
             SELECT u.id, u.username, u.nickname, u.signature, u.contact, u.avatar,
+                   u.birthday, u.gender, u.address, u.age,
                    f.remark, f.group_name, f.created_at
             FROM friendships f
             JOIN users u ON u.id = f.friend_id
@@ -383,6 +438,144 @@ class ChatStorage:
         )
         return row is not None
 
+    def create_friend_request(self, requester_id: int, receiver_username: str, message: str = "") -> dict[str, Any]:
+        receiver_row = self._fetchone("SELECT id FROM users WHERE username = ?", (receiver_username,))
+        if receiver_row is None:
+            raise NotFoundError("friend user not found")
+        receiver_id = int(receiver_row["id"])
+        if receiver_id == requester_id:
+            raise StorageError("cannot add yourself")
+        if self.are_friends(requester_id, receiver_id):
+            raise StorageError("friendship already exists")
+        reverse_pending = self._fetchone(
+            """
+            SELECT id FROM friend_requests
+            WHERE requester_id = ? AND receiver_id = ? AND status = 'pending'
+            """,
+            (receiver_id, requester_id),
+        )
+        if reverse_pending:
+            raise StorageError("the other user already sent you a friend request")
+
+        with self._lock:
+            cursor = None
+            try:
+                cursor = self._execute(
+                    """
+                    INSERT INTO friend_requests(requester_id, receiver_id, message)
+                    VALUES (?, ?, ?)
+                    """,
+                    (requester_id, receiver_id, message),
+                )
+                request_id = int(cursor.lastrowid)
+                self.conn.commit()
+            except Exception as exc:
+                self.conn.rollback()
+                if self._is_integrity_error(exc):
+                    raise StorageError("friend request already pending") from exc
+                raise
+            finally:
+                if cursor:
+                    cursor.close()
+        return self.get_friend_request(request_id)
+
+    def get_friend_request(self, request_id: int) -> dict[str, Any]:
+        row = self._fetchone(
+            """
+            SELECT fr.*,
+                   req.username AS requester_username, req.nickname AS requester_nickname,
+                   recv.username AS receiver_username, recv.nickname AS receiver_nickname
+            FROM friend_requests fr
+            JOIN users req ON req.id = fr.requester_id
+            JOIN users recv ON recv.id = fr.receiver_id
+            WHERE fr.id = ?
+            """,
+            (request_id,),
+        )
+        if row is None:
+            raise NotFoundError("friend request not found")
+        return row
+
+    def list_friend_requests(self, user_id: int) -> dict[str, list[dict[str, Any]]]:
+        incoming = self._fetchall(
+            """
+            SELECT fr.*,
+                   req.username AS requester_username, req.nickname AS requester_nickname,
+                   recv.username AS receiver_username, recv.nickname AS receiver_nickname
+            FROM friend_requests fr
+            JOIN users req ON req.id = fr.requester_id
+            JOIN users recv ON recv.id = fr.receiver_id
+            WHERE fr.receiver_id = ? AND fr.status = 'pending'
+            ORDER BY fr.created_at DESC, fr.id DESC
+            """,
+            (user_id,),
+        )
+        outgoing = self._fetchall(
+            """
+            SELECT fr.*,
+                   req.username AS requester_username, req.nickname AS requester_nickname,
+                   recv.username AS receiver_username, recv.nickname AS receiver_nickname
+            FROM friend_requests fr
+            JOIN users req ON req.id = fr.requester_id
+            JOIN users recv ON recv.id = fr.receiver_id
+            WHERE fr.requester_id = ? AND fr.status = 'pending'
+            ORDER BY fr.created_at DESC, fr.id DESC
+            """,
+            (user_id,),
+        )
+        return {"incoming": incoming, "outgoing": outgoing}
+
+    def respond_friend_request(
+        self,
+        user_id: int,
+        request_id: int,
+        accept: bool,
+        remark: str = "",
+        group_name: str = "Friends",
+    ) -> dict[str, Any]:
+        request = self.get_friend_request(request_id)
+        if int(request["receiver_id"]) != user_id:
+            raise PermissionError("only receiver can respond to this friend request")
+        if request["status"] != "pending":
+            raise StorageError("friend request is already handled")
+
+        with self._lock:
+            cursors = []
+            try:
+                status = "accepted" if accept else "rejected"
+                cursors.append(
+                    self._execute(
+                        """
+                        UPDATE friend_requests
+                        SET status = ?, responded_at = CURRENT_TIMESTAMP
+                        WHERE id = ? AND status = 'pending'
+                        """,
+                        (status, request_id),
+                    )
+                )
+                if accept:
+                    requester_id = int(request["requester_id"])
+                    cursors.append(
+                        self._execute(
+                            self._insert_ignore_friendship_sql(),
+                            (user_id, requester_id, remark, group_name),
+                        )
+                    )
+                    cursors.append(
+                        self._execute(
+                            self._insert_ignore_friendship_sql(),
+                            (requester_id, user_id, "", "Friends"),
+                        )
+                    )
+                self.conn.commit()
+            except Exception:
+                self.conn.rollback()
+                raise
+            finally:
+                for cursor in cursors:
+                    cursor.close()
+        return self.get_friend_request(request_id)
+
     def create_group(self, owner_id: int, name: str) -> dict[str, Any]:
         with self._lock:
             group_cursor = member_cursor = None
@@ -430,11 +623,145 @@ class ChatStorage:
             return "INSERT IGNORE INTO group_members(group_id, user_id, role, alias) VALUES (?, ?, 'member', '')"
         return "INSERT OR IGNORE INTO group_members(group_id, user_id, role, alias) VALUES (?, ?, 'member', '')"
 
+    def create_group_invitation(self, group_id: int, inviter_id: int, receiver_username: str, message: str = "") -> dict[str, Any]:
+        group = self.get_group(group_id, inviter_id)
+        if group["my_role"] not in {"owner", "admin"}:
+            raise PermissionError("only owner or admin can invite members")
+        receiver_row = self._fetchone("SELECT id FROM users WHERE username = ?", (receiver_username,))
+        if receiver_row is None:
+            raise NotFoundError("user not found")
+        receiver_id = int(receiver_row["id"])
+        if self._fetchone("SELECT 1 AS ok FROM group_members WHERE group_id = ? AND user_id = ?", (group_id, receiver_id)):
+            raise StorageError("user is already a group member")
+
+        with self._lock:
+            cursor = None
+            try:
+                cursor = self._execute(
+                    """
+                    INSERT INTO group_invitations(group_id, inviter_id, receiver_id, message)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (group_id, inviter_id, receiver_id, message),
+                )
+                invitation_id = int(cursor.lastrowid)
+                self.conn.commit()
+            except Exception as exc:
+                self.conn.rollback()
+                if self._is_integrity_error(exc):
+                    raise StorageError("group invitation already pending") from exc
+                raise
+            finally:
+                if cursor:
+                    cursor.close()
+        return self.get_group_invitation(invitation_id)
+
+    def get_group_invitation(self, invitation_id: int) -> dict[str, Any]:
+        row = self._fetchone(
+            """
+            SELECT gi.*, g.name AS group_name, g.owner_id,
+                   inv.username AS inviter_username, inv.nickname AS inviter_nickname,
+                   recv.username AS receiver_username, recv.nickname AS receiver_nickname
+            FROM group_invitations gi
+            JOIN chat_groups g ON g.id = gi.group_id
+            JOIN users inv ON inv.id = gi.inviter_id
+            JOIN users recv ON recv.id = gi.receiver_id
+            WHERE gi.id = ?
+            """,
+            (invitation_id,),
+        )
+        if row is None:
+            raise NotFoundError("group invitation not found")
+        return row
+
+    def list_group_invitations(self, user_id: int) -> dict[str, list[dict[str, Any]]]:
+        incoming = self._fetchall(
+            """
+            SELECT gi.*, g.name AS group_name, g.owner_id,
+                   inv.username AS inviter_username, inv.nickname AS inviter_nickname,
+                   recv.username AS receiver_username, recv.nickname AS receiver_nickname
+            FROM group_invitations gi
+            JOIN chat_groups g ON g.id = gi.group_id
+            JOIN users inv ON inv.id = gi.inviter_id
+            JOIN users recv ON recv.id = gi.receiver_id
+            WHERE gi.receiver_id = ? AND gi.status = 'pending'
+            ORDER BY gi.created_at DESC, gi.id DESC
+            """,
+            (user_id,),
+        )
+        outgoing = self._fetchall(
+            """
+            SELECT gi.*, g.name AS group_name, g.owner_id,
+                   inv.username AS inviter_username, inv.nickname AS inviter_nickname,
+                   recv.username AS receiver_username, recv.nickname AS receiver_nickname
+            FROM group_invitations gi
+            JOIN chat_groups g ON g.id = gi.group_id
+            JOIN users inv ON inv.id = gi.inviter_id
+            JOIN users recv ON recv.id = gi.receiver_id
+            WHERE gi.inviter_id = ? AND gi.status = 'pending'
+            ORDER BY gi.created_at DESC, gi.id DESC
+            """,
+            (user_id,),
+        )
+        return {"incoming": incoming, "outgoing": outgoing}
+
+    def respond_group_invitation(self, user_id: int, invitation_id: int, accept: bool) -> dict[str, Any]:
+        invitation = self.get_group_invitation(invitation_id)
+        if int(invitation["receiver_id"]) != user_id:
+            raise PermissionError("only receiver can respond to this group invitation")
+        if invitation["status"] != "pending":
+            raise StorageError("group invitation is already handled")
+
+        with self._lock:
+            cursors = []
+            try:
+                status = "accepted" if accept else "rejected"
+                cursors.append(
+                    self._execute(
+                        """
+                        UPDATE group_invitations
+                        SET status = ?, responded_at = CURRENT_TIMESTAMP
+                        WHERE id = ? AND status = 'pending'
+                        """,
+                        (status, invitation_id),
+                    )
+                )
+                if accept:
+                    cursors.append(
+                        self._execute(
+                            self._insert_ignore_group_member_sql(),
+                            (int(invitation["group_id"]), user_id),
+                        )
+                    )
+                self.conn.commit()
+            except Exception:
+                self.conn.rollback()
+                raise
+            finally:
+                for cursor in cursors:
+                    cursor.close()
+        return self.get_group_invitation(invitation_id)
+
+    def _insert_ignore_message_read_sql(self) -> str:
+        if self.backend == "mysql":
+            return "INSERT IGNORE INTO message_reads(user_id, message_id) VALUES (?, ?)"
+        return "INSERT OR IGNORE INTO message_reads(user_id, message_id) VALUES (?, ?)"
+
     def remove_group_member(self, group_id: int, operator_id: int, member_id: int) -> None:
         group = self.get_group(group_id, operator_id)
-        if group["owner_id"] == member_id:
+        if int(group["owner_id"]) == member_id:
             raise PermissionError("owner cannot be removed")
-        if operator_id != group["owner_id"] and operator_id != member_id:
+        member = self.get_group_member(group_id, member_id)
+        operator_role = str(group["my_role"])
+        member_role = str(member["role"])
+        if operator_id == member_id:
+            self.leave_group(group_id, operator_id)
+            return
+        if operator_role == "owner":
+            pass
+        elif operator_role == "admin" and member_role == "member":
+            pass
+        else:
             raise PermissionError("no permission to remove group member")
         with self._lock:
             cursor = self._execute(
@@ -447,10 +774,197 @@ class ChatStorage:
         if rowcount == 0:
             raise NotFoundError("group member not found")
 
+    def get_group_member(self, group_id: int, user_id: int) -> dict[str, Any]:
+        row = self._fetchone(
+            """
+            SELECT gm.*, u.username, u.nickname, u.avatar
+            FROM group_members gm
+            JOIN users u ON u.id = gm.user_id
+            WHERE gm.group_id = ? AND gm.user_id = ?
+            """,
+            (group_id, user_id),
+        )
+        if row is None:
+            raise NotFoundError("group member not found")
+        return row
+
+    def update_group_member_role(self, group_id: int, operator_id: int, member_id: int, role: str) -> dict[str, Any]:
+        if role not in {"admin", "member"}:
+            raise ValueError("role must be admin or member")
+        group = self.get_group(group_id, operator_id)
+        if str(group["my_role"]) != "owner":
+            raise PermissionError("only owner can change group roles")
+        member = self.get_group_member(group_id, member_id)
+        if str(member["role"]) == "owner" or int(member_id) == int(group["owner_id"]):
+            raise PermissionError("owner role cannot be changed")
+        current_role = str(member["role"])
+        if current_role == role:
+            return self.get_group_member(group_id, member_id)
+
+        role_order = 0
+        if role == "admin":
+            role_order = self._next_group_role_order(group_id)
+        with self._lock:
+            cursor = self._execute(
+                """
+                UPDATE group_members
+                SET role = ?, role_order = ?
+                WHERE group_id = ? AND user_id = ?
+                """,
+                (role, role_order, group_id, member_id),
+            )
+            rowcount = cursor.rowcount
+            cursor.close()
+            self.conn.commit()
+        if rowcount == 0:
+            raise NotFoundError("group member not found")
+        return self.get_group_member(group_id, member_id)
+
+    def update_group_member_alias(self, group_id: int, operator_id: int, member_id: int, alias: str) -> dict[str, Any]:
+        group = self.get_group(group_id, operator_id)
+        if int(operator_id) != int(member_id) and str(group["my_role"]) not in {"owner", "admin"}:
+            raise PermissionError("only owner or admin can change other group nicknames")
+        self.get_group_member(group_id, member_id)
+        with self._lock:
+            cursor = self._execute(
+                """
+                UPDATE group_members
+                SET alias = ?
+                WHERE group_id = ? AND user_id = ?
+                """,
+                (alias, group_id, member_id),
+            )
+            rowcount = cursor.rowcount
+            cursor.close()
+            self.conn.commit()
+        if rowcount == 0:
+            raise NotFoundError("group member not found")
+        return self.get_group_member(group_id, member_id)
+
+    def update_group_remark(self, group_id: int, user_id: int, group_remark: str) -> dict[str, Any]:
+        self.get_group(group_id, user_id)
+        with self._lock:
+            cursor = self._execute(
+                """
+                UPDATE group_members
+                SET group_remark = ?
+                WHERE group_id = ? AND user_id = ?
+                """,
+                (group_remark, group_id, user_id),
+            )
+            rowcount = cursor.rowcount
+            cursor.close()
+            self.conn.commit()
+        if rowcount == 0:
+            raise NotFoundError("group member not found")
+        return self.get_group(group_id, user_id)
+
+    def rename_group(self, group_id: int, operator_id: int, name: str) -> dict[str, Any]:
+        group = self.get_group(group_id, operator_id)
+        if str(group["my_role"]) not in {"owner", "admin"}:
+            raise PermissionError("only owner or admin can rename group")
+        with self._lock:
+            cursor = self._execute(
+                "UPDATE chat_groups SET name = ? WHERE id = ?",
+                (name, group_id),
+            )
+            rowcount = cursor.rowcount
+            cursor.close()
+            self.conn.commit()
+        if rowcount == 0:
+            raise NotFoundError("group not found")
+        return self.get_group(group_id, operator_id)
+
+    def leave_group(self, group_id: int, user_id: int) -> dict[str, Any] | None:
+        group = self.get_group(group_id, user_id)
+        members = self.list_group_members(group_id, user_id)
+        if len(members) <= 1:
+            self.dismiss_group(group_id, user_id)
+            return None
+
+        with self._lock:
+            cursors = []
+            try:
+                if int(group["owner_id"]) == user_id:
+                    successor = self._next_group_owner(group_id, user_id)
+                    if successor is None:
+                        raise StorageError("no successor for group owner")
+                    successor_id = int(successor["user_id"])
+                    cursors.append(
+                        self._execute(
+                            "UPDATE chat_groups SET owner_id = ? WHERE id = ?",
+                            (successor_id, group_id),
+                        )
+                    )
+                    cursors.append(
+                        self._execute(
+                            "UPDATE group_members SET role = 'owner', role_order = 0 WHERE group_id = ? AND user_id = ?",
+                            (group_id, successor_id),
+                        )
+                    )
+                cursors.append(
+                    self._execute(
+                        "DELETE FROM group_members WHERE group_id = ? AND user_id = ?",
+                        (group_id, user_id),
+                    )
+                )
+                self.conn.commit()
+            except Exception:
+                self.conn.rollback()
+                raise
+            finally:
+                for cursor in cursors:
+                    cursor.close()
+        return self._fetchone("SELECT * FROM chat_groups WHERE id = ?", (group_id,))
+
+    def dismiss_group(self, group_id: int, operator_id: int) -> None:
+        group = self.get_group(group_id, operator_id)
+        if int(group["owner_id"]) != operator_id:
+            raise PermissionError("only owner can dismiss group")
+        with self._lock:
+            cursor = self._execute("DELETE FROM chat_groups WHERE id = ?", (group_id,))
+            rowcount = cursor.rowcount
+            cursor.close()
+            self.conn.commit()
+        if rowcount == 0:
+            raise NotFoundError("group not found")
+
+    def _next_group_role_order(self, group_id: int) -> int:
+        row = self._fetchone(
+            "SELECT COALESCE(MAX(role_order), 0) AS max_order FROM group_members WHERE group_id = ?",
+            (group_id,),
+        )
+        return int(row["max_order"]) + 1 if row else 1
+
+    def _next_group_owner(self, group_id: int, leaving_owner_id: int) -> dict[str, Any] | None:
+        admin = self._fetchone(
+            """
+            SELECT *
+            FROM group_members
+            WHERE group_id = ? AND user_id <> ? AND role = 'admin'
+            ORDER BY role_order ASC, joined_at ASC, id ASC
+            LIMIT 1
+            """,
+            (group_id, leaving_owner_id),
+        )
+        if admin:
+            return admin
+        return self._fetchone(
+            """
+            SELECT *
+            FROM group_members
+            WHERE group_id = ? AND user_id <> ?
+            ORDER BY joined_at ASC, id ASC
+            LIMIT 1
+            """,
+            (group_id, leaving_owner_id),
+        )
+
     def list_groups(self, user_id: int) -> list[dict[str, Any]]:
         return self._fetchall(
             """
-            SELECT g.id, g.name, g.owner_id, gm.role AS my_role, g.created_at
+            SELECT g.id, g.name, g.owner_id, gm.role AS my_role,
+                   gm.alias AS my_alias, gm.group_remark, g.created_at
             FROM group_members gm
             JOIN chat_groups g ON g.id = gm.group_id
             WHERE gm.user_id = ?
@@ -462,7 +976,8 @@ class ChatStorage:
     def get_group(self, group_id: int, user_id: int) -> dict[str, Any]:
         row = self._fetchone(
             """
-            SELECT g.id, g.name, g.owner_id, gm.role AS my_role, g.created_at
+            SELECT g.id, g.name, g.owner_id, gm.role AS my_role,
+                   gm.alias AS my_alias, gm.group_remark, g.created_at
             FROM chat_groups g
             JOIN group_members gm ON gm.group_id = g.id
             WHERE g.id = ? AND gm.user_id = ?
@@ -477,11 +992,16 @@ class ChatStorage:
         self.get_group(group_id, user_id)
         return self._fetchall(
             """
-            SELECT u.id, u.username, u.nickname, u.avatar, gm.role, gm.alias, gm.joined_at
+            SELECT u.id, u.username, u.nickname, u.signature, u.contact, u.avatar,
+                   u.birthday, u.gender, u.address, u.age,
+                   gm.role, gm.role_order, gm.alias, gm.joined_at
             FROM group_members gm
             JOIN users u ON u.id = gm.user_id
             WHERE gm.group_id = ?
-            ORDER BY CASE gm.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, u.username
+            ORDER BY CASE gm.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,
+                     gm.role_order ASC,
+                     gm.joined_at ASC,
+                     gm.id ASC
             """,
             (group_id,),
         )
@@ -538,15 +1058,116 @@ class ChatStorage:
             message_id = int(cursor.lastrowid)
             cursor.close()
             self.conn.commit()
+        self.mark_message_read(sender_id, message_id)
         return self.get_message(message_id)
+
+    def mark_message_read(self, user_id: int, message_id: int) -> None:
+        with self._lock:
+            cursor = self._execute(self._insert_ignore_message_read_sql(), (user_id, message_id))
+            cursor.close()
+            self.conn.commit()
+
+    def mark_conversation_read(self, user_id: int, conversation_type: str, target_id: int) -> int:
+        if conversation_type == "direct":
+            if not self.are_friends(user_id, target_id):
+                raise PermissionError("not friends")
+            rows = self._fetchall(
+                """
+                SELECT m.id
+                FROM messages m
+                WHERE m.conversation_type = 'direct'
+                  AND ((m.sender_id = ? AND m.target_id = ?) OR (m.sender_id = ? AND m.target_id = ?))
+                  AND m.sender_id <> ?
+                  AND NOT EXISTS (
+                      SELECT 1 FROM message_reads mr
+                      WHERE mr.user_id = ? AND mr.message_id = m.id
+                  )
+                """,
+                (user_id, target_id, target_id, user_id, user_id, user_id),
+            )
+        elif conversation_type == "group":
+            self.get_group(target_id, user_id)
+            rows = self._fetchall(
+                """
+                SELECT m.id
+                FROM messages m
+                WHERE m.conversation_type = 'group'
+                  AND m.target_id = ?
+                  AND m.sender_id <> ?
+                  AND NOT EXISTS (
+                      SELECT 1 FROM message_reads mr
+                      WHERE mr.user_id = ? AND mr.message_id = m.id
+                  )
+                """,
+                (target_id, user_id, user_id),
+            )
+        else:
+            raise ValueError("conversation type must be direct or group")
+
+        if not rows:
+            return 0
+
+        with self._lock:
+            cursors = []
+            try:
+                for row in rows:
+                    cursor = self._execute(self._insert_ignore_message_read_sql(), (user_id, int(row["id"])))
+                    cursors.append(cursor)
+                self.conn.commit()
+            except Exception:
+                self.conn.rollback()
+                raise
+            finally:
+                for cursor in cursors:
+                    cursor.close()
+        return len(rows)
+
+    def direct_unread_count(self, user_id: int, friend_id: int) -> int:
+        row = self._fetchone(
+            """
+            SELECT COUNT(*) AS count
+            FROM messages m
+            WHERE m.conversation_type = 'direct'
+              AND m.sender_id = ?
+              AND m.target_id = ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM message_reads mr
+                  WHERE mr.user_id = ? AND mr.message_id = m.id
+              )
+            """,
+            (friend_id, user_id, user_id),
+        )
+        return int(row["count"]) if row else 0
+
+    def group_unread_count(self, user_id: int, group_id: int) -> int:
+        row = self._fetchone(
+            """
+            SELECT COUNT(*) AS count
+            FROM messages m
+            WHERE m.conversation_type = 'group'
+              AND m.target_id = ?
+              AND m.sender_id <> ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM message_reads mr
+                  WHERE mr.user_id = ? AND mr.message_id = m.id
+              )
+            """,
+            (group_id, user_id, user_id),
+        )
+        return int(row["count"]) if row else 0
 
     def get_message(self, message_id: int) -> dict[str, Any]:
         row = self._fetchone(
             """
             SELECT m.*, u.username AS sender_username, u.nickname AS sender_nickname,
+                   u.avatar AS sender_avatar, sender_gm.alias AS sender_group_alias,
                    f.original_name AS file_name, f.size AS file_size, f.storage_name
             FROM messages m
             JOIN users u ON u.id = m.sender_id
+            LEFT JOIN group_members sender_gm
+              ON sender_gm.group_id = m.target_id
+             AND sender_gm.user_id = m.sender_id
+             AND m.conversation_type = 'group'
             LEFT JOIN files f ON f.id = m.file_id
             WHERE m.id = ?
             """,
@@ -564,6 +1185,7 @@ class ChatStorage:
                 self._fetchall(
                     """
                     SELECT m.*, u.username AS sender_username, u.nickname AS sender_nickname,
+                           u.avatar AS sender_avatar,
                            f.original_name AS file_name, f.size AS file_size, f.storage_name
                     FROM messages m
                     JOIN users u ON u.id = m.sender_id
@@ -585,9 +1207,14 @@ class ChatStorage:
                 self._fetchall(
                     """
                     SELECT m.*, u.username AS sender_username, u.nickname AS sender_nickname,
+                           u.avatar AS sender_avatar, sender_gm.alias AS sender_group_alias,
                            f.original_name AS file_name, f.size AS file_size, f.storage_name
                     FROM messages m
                     JOIN users u ON u.id = m.sender_id
+                    LEFT JOIN group_members sender_gm
+                      ON sender_gm.group_id = m.target_id
+                     AND sender_gm.user_id = m.sender_id
+                     AND m.conversation_type = 'group'
                     LEFT JOIN files f ON f.id = m.file_id
                     WHERE m.conversation_type = 'group' AND m.target_id = ?
                     ORDER BY m.created_at DESC, m.id DESC
@@ -603,11 +1230,16 @@ class ChatStorage:
         return self._fetchall(
             """
             SELECT DISTINCT m.*, u.username AS sender_username, u.nickname AS sender_nickname,
+                   u.avatar AS sender_avatar, sender_gm.alias AS sender_group_alias,
                    f.original_name AS file_name, f.size AS file_size, f.storage_name
             FROM messages m
             JOIN users u ON u.id = m.sender_id
             LEFT JOIN files f ON f.id = m.file_id
             LEFT JOIN group_members gm ON gm.group_id = m.target_id AND m.conversation_type = 'group'
+            LEFT JOIN group_members sender_gm
+              ON sender_gm.group_id = m.target_id
+             AND sender_gm.user_id = m.sender_id
+             AND m.conversation_type = 'group'
             WHERE m.content LIKE ?
               AND (
                     (m.conversation_type = 'direct' AND (m.sender_id = ? OR m.target_id = ?))
@@ -695,6 +1327,12 @@ class ChatStorage:
         )
         if group_message:
             return row
+        avatar_user = self._fetchone(
+            "SELECT 1 AS ok FROM users WHERE avatar = ? LIMIT 1",
+            (f"file:{file_id}",),
+        )
+        if avatar_user:
+            return row
         raise PermissionError("no permission to download this file")
 
     def _ensure_sender_owns_file(self, sender_id: int, file_id: int | None) -> None:
@@ -728,6 +1366,10 @@ class ChatStorage:
             "signature": row["signature"],
             "contact": row["contact"],
             "avatar": row["avatar"],
+            "birthday": row.get("birthday", ""),
+            "gender": row.get("gender", ""),
+            "address": row.get("address", ""),
+            "age": row.get("age"),
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
