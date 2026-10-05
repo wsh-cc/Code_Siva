@@ -1648,6 +1648,10 @@ function buildEmojiPanel() {
 
 async function openConfig() {
   const response = await api("bridge.config");
+  if (response.locked) {
+    showToast("上线模式下服务器连接由部署配置固定");
+    return;
+  }
   els.configForm.host.value = response.host || "127.0.0.1";
   els.configForm.port.value = response.port || 8765;
   els.configDialog.showModal();

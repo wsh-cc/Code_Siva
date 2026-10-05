@@ -1,0 +1,3 @@
+# Silver dragon-woman look mechanics
+
+Feet, hips, dress hem, folded wings and the attached tail stay anchored. The irises, eyelids and nose lead a natural gaze; head yaw and pitch follow through the neck. Silver hair and segmented horns follow the head without changing construction. The face remains visible in every pose; no back-facing turntable and no whole-body rotation. Screen coordinates determine directions. Up exposes chin underside and raises irises; down lowers chin and gaze. Right/left shift the nose and rotate face toward the corresponding screen edge. Diagonal steps combine both axes continuously with restrained upper torso follow-through. Keep original violet irises and mature facial design, no replacement eyes or detached pupils.

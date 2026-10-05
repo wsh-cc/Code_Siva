@@ -146,6 +146,7 @@ flowchart TB
 - Windows、macOS 或 Linux 均可运行服务端和 Web 客户端。
 - 桌面客户端需要本机 Python 支持 Tkinter。
 - 使用 MySQL 模式时，需要可访问的 MySQL 服务。
+- 上线部署建议使用 Docker Compose、MySQL、反向代理和 HTTPS，详见 `docs/production.md`。
 
 安装依赖：
 
@@ -209,7 +210,35 @@ python start_web_client.py --host 127.0.0.1 --port 8080 --chat-host 127.0.0.1 --
 python start_client.py --host 127.0.0.1 --port 8765
 ```
 
-### 方式三：MySQL 模式
+### 方式三：局域网多人聊天模式
+
+在作为服务端的机器上启动 TCP 服务端：
+
+```powershell
+python start_server.py --lan --port 8765 --db-backend sqlite --db database/ochat.db
+```
+
+如果要让其他人通过浏览器访问，在同一台机器上启动 Web 桥接服务：
+
+```powershell
+python start_web_client.py --lan --port 8080 --chat-host 127.0.0.1 --chat-port 8765
+```
+
+启动后终端会打印局域网访问地址。其他电脑的桌面客户端使用服务端机器的局域网 IP 连接，例如：
+
+```powershell
+python start_client.py --host 192.168.1.20 --port 8765
+```
+
+浏览器客户端直接打开 Web 桥接服务打印出的 LAN URL，例如：
+
+```text
+http://192.168.1.20:8080
+```
+
+如果防火墙询问是否允许 Python 通信，需要允许当前网络访问。
+
+### 方式四：MySQL 模式
 
 启动服务端时指定 MySQL 参数：
 

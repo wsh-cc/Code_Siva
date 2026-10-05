@@ -1,0 +1,11 @@
+.git
+.pytest_cache
+__pycache__/
+*.pyc
+*.pyo
+*.log
+database/*.db
+database/*.db-*
+database/uploads/
+web_perf_http*.log
+_word_review_text.txt

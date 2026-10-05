@@ -1,0 +1,1 @@
+First row10 draft rejected before assembly: nine figures instead of eight, and the final upward family turned screen-right instead of screen-left. Root causes: visual frame-count and direction semantics. Preserve passing row9; repair full coherent row10 with simpler explicit eight-pose enumeration and negative screen-right constraint.

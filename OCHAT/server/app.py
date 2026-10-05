@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import base64
 import logging
+import os
 import socket
 import sys
 import threading
@@ -13,6 +14,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from .network import endpoint_hints, resolve_bind_host
 from .protocol import LineReader, ProtocolError, fail, ok, send_packet
 from .security import (
     create_token,
@@ -31,6 +33,13 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 
 LOGGER = logging.getLogger("ochat.server")
+
+
+def env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 class ClientSession:
@@ -124,6 +133,7 @@ class ChatServer:
     def dispatch(self, session: ClientSession, action: str, packet: dict[str, Any]) -> dict[str, Any] | None:
         try:
             handlers = {
+                "health": self.handle_health,
                 "register": self.handle_register,
                 "login": self.handle_login,
                 "resume": self.handle_resume,
@@ -177,6 +187,9 @@ class ChatServer:
         except Exception:
             LOGGER.exception("unhandled error while processing action %s", action)
             return fail("internal server error", code="INTERNAL_ERROR")
+
+    def handle_health(self, session: ClientSession, packet: dict[str, Any]) -> dict[str, Any]:
+        return ok(service="ochat-tcp", status="ready", online_users=len(self.online_user_ids()))
 
     def handle_register(self, session: ClientSession, packet: dict[str, Any]) -> dict[str, Any]:
         username = str(packet.get("username", "")).strip()
@@ -786,23 +799,36 @@ class ChatServer:
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the OCHAT server.")
-    parser.add_argument("--host", default=DEFAULT_HOST)
-    parser.add_argument("--port", default=DEFAULT_PORT, type=int)
-    parser.add_argument("--db-backend", choices=("mysql", "sqlite"), default="sqlite")
-    parser.add_argument("--db", default=str(Path("database") / "ochat.db"), help="SQLite database path when --db-backend sqlite")
-    parser.add_argument("--mysql-host", default=None)
-    parser.add_argument("--mysql-port", default=None, type=int)
-    parser.add_argument("--mysql-user", default=None)
-    parser.add_argument("--mysql-password", default=None)
-    parser.add_argument("--mysql-database", default=None)
-    parser.add_argument("--upload-dir", default=str(Path("database") / "uploads"))
+    parser.add_argument("--host", default=os.getenv("OCHAT_HOST"))
+    parser.add_argument("--lan", action="store_true", default=env_bool("OCHAT_LAN"), help="listen on all network interfaces for LAN clients")
+    parser.add_argument("--port", default=int(os.getenv("OCHAT_PORT", str(DEFAULT_PORT))), type=int)
+    parser.add_argument("--db-backend", choices=("mysql", "sqlite"), default=os.getenv("OCHAT_DB_BACKEND", "sqlite"))
+    parser.add_argument("--db", default=os.getenv("OCHAT_DB_PATH", str(Path("database") / "ochat.db")), help="SQLite database path when --db-backend sqlite")
+    parser.add_argument("--mysql-host", default=os.getenv("OCHAT_DB_HOST"))
+    parser.add_argument("--mysql-port", default=os.getenv("OCHAT_DB_PORT"), type=int)
+    parser.add_argument("--mysql-user", default=os.getenv("OCHAT_DB_USER"))
+    parser.add_argument("--mysql-password", default=os.getenv("OCHAT_DB_PASSWORD"))
+    parser.add_argument("--mysql-database", default=os.getenv("OCHAT_DB_NAME"))
+    parser.add_argument("--upload-dir", default=os.getenv("OCHAT_UPLOAD_DIR", str(Path("database") / "uploads")))
     parser.add_argument("--debug", action="store_true")
     return parser
+
+
+def print_access_hints(host: str, port: int) -> None:
+    hints = endpoint_hints(host, port)
+    print(f"Local TCP endpoint: {hints['local'][0]}", flush=True)
+    if hints["lan"]:
+        print("LAN TCP endpoints for other desktop clients:", flush=True)
+        for endpoint in hints["lan"]:
+            print(f"  {endpoint}", flush=True)
+    elif host == "0.0.0.0":
+        print("LAN mode is enabled, but no non-loopback IPv4 address was detected.", flush=True)
 
 
 def main() -> None:
     args = build_arg_parser().parse_args()
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    host = resolve_bind_host(args.host, args.lan, DEFAULT_HOST)
     mysql_config = {
         key: value
         for key, value in {
@@ -815,12 +841,13 @@ def main() -> None:
         if value is not None
     }
     if args.db_backend == "sqlite":
-        print(f"Starting OCHAT server on {args.host}:{args.port} using sqlite database {args.db}...", flush=True)
+        print(f"Starting OCHAT server on {host}:{args.port} using sqlite database {args.db}...", flush=True)
     else:
-        print(f"Starting OCHAT server on {args.host}:{args.port} using mysql...", flush=True)
+        print(f"Starting OCHAT server on {host}:{args.port} using mysql...", flush=True)
+    print_access_hints(host, args.port)
     try:
         server = ChatServer(
-            args.host,
+            host,
             args.port,
             args.db,
             db_backend=args.db_backend,

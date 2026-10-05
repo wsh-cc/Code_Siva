@@ -34,6 +34,20 @@ python start_server.py
 python start_server.py --host 127.0.0.1 --port 8765 --db-backend sqlite --db database/ochat.db
 ```
 
+如果要让同一局域网里的其他电脑连接同一个聊天服务端，使用 LAN 模式：
+
+```powershell
+python start_server.py --lan --port 8765 --db-backend sqlite --db database/ochat.db
+```
+
+LAN 模式会监听 `0.0.0.0`，启动后终端会打印 `Local TCP endpoint` 和 `LAN TCP endpoints`。其他桌面客户端使用打印出来的局域网地址连接，例如：
+
+```powershell
+python start_client.py --host 192.168.1.20 --port 8765
+```
+
+如果 Windows 防火墙弹出提示，需要允许 Python 在当前网络中通信，否则其他机器会连不上。
+
 如果要连接 MySQL，需要先确认 MySQL 服务已经启动，再传入账号和密码：
 
 ```powershell
@@ -61,6 +75,27 @@ http://127.0.0.1:8080
 ```
 
 Web 端中间多了一层本地 HTTP 桥接服务。浏览器先访问这个桥接服务，桥接服务再连接 OCHAT TCP 服务端，所以 `--chat-port` 要和服务端端口保持一致。
+
+多人 Web 访问可以让服务端机器同时启动 TCP 服务端和 Web 桥接服务：
+
+```powershell
+python start_server.py --lan --port 8765
+python start_web_client.py --lan --port 8080 --chat-host 127.0.0.1 --chat-port 8765
+```
+
+启动后终端会打印 `OCHAT Web client LAN URLs`。同一局域网里的其他人直接在浏览器打开类似下面的地址：
+
+```text
+http://192.168.1.20:8080
+```
+
+如果 Web 桥接服务和 TCP 聊天服务端不在同一台机器上，把 `--chat-host` 改成 TCP 服务端的局域网 IP。
+
+如果要部署到服务器并对外提供访问，不要只使用 LAN 模式。请使用生产模式和 Docker Compose 部署方式，见：
+
+```text
+docs/production.md
+```
 
 ## 基本演示流程
 

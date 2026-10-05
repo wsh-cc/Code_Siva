@@ -26,6 +26,8 @@
 - 新增 `messages.read` 和 `unread.updated`，用于未读消息同步。
 - 增加群角色、群昵称、群备注、群重命名、退群和解散群聊相关处理。
 - 文件上传和下载继续由服务端做权限检查，避免客户端绕过限制。
+- 服务端和 Web 桥接服务增加 `--lan` 启动模式，可以监听局域网地址，支持多台设备连接同一个聊天后端。
+- Web 桥接服务增加 `--production` 模式、健康检查、Origin 白名单、基础安全头和 Docker Compose 部署文件，开始具备上线部署形态。
 
 ## 数据库变化
 
@@ -59,6 +61,19 @@ Web 端访问：
 
 ```text
 http://127.0.0.1:8080
+```
+
+局域网多人模式：
+
+```powershell
+python start_server.py --lan --port 8765
+python start_web_client.py --lan --port 8080 --chat-host 127.0.0.1 --chat-port 8765
+```
+
+上线部署说明见：
+
+```text
+docs/production.md
 ```
 
 MySQL 模式：

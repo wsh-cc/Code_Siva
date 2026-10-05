@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import mimetypes
+import os
 import secrets
 import threading
 from http import HTTPStatus
@@ -14,9 +15,27 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from client.api import OchatClient
+from server.network import endpoint_hints, resolve_bind_host
 
 
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
+DEFAULT_WEB_HOST = "127.0.0.1"
+DEFAULT_WEB_PORT = 8080
+DEFAULT_CHAT_HOST = "127.0.0.1"
+DEFAULT_CHAT_PORT = 8765
+DEFAULT_MAX_BODY_BYTES = 18 * 1024 * 1024
+
+
+def env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def env_list(name: str) -> list[str]:
+    value = os.getenv(name, "")
+    return [item.strip() for item in value.split(",") if item.strip()]
 
 
 class BrowserSession:
@@ -76,10 +95,24 @@ class BrowserSession:
 
 
 class WebClientServer(ThreadingHTTPServer):
-    def __init__(self, address: tuple[str, int], chat_host: str, chat_port: int) -> None:
+    def __init__(
+        self,
+        address: tuple[str, int],
+        chat_host: str,
+        chat_port: int,
+        *,
+        production: bool = False,
+        allowed_origins: set[str] | None = None,
+        secure_cookies: bool = False,
+        max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
+    ) -> None:
         super().__init__(address, WebClientHandler)
         self.chat_host = chat_host
         self.chat_port = chat_port
+        self.production = production
+        self.allowed_origins = allowed_origins or set()
+        self.secure_cookies = secure_cookies
+        self.max_body_bytes = max_body_bytes
         self.sessions: dict[str, BrowserSession] = {}
         self.sessions_lock = threading.Lock()
 
@@ -105,6 +138,12 @@ class WebClientHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path == "/healthz":
+            self.write_json({"ok": True, "service": "ochat-web", "production": self.server.production})
+            return
+        if parsed.path == "/readyz":
+            self.handle_ready()
+            return
         if parsed.path == "/api/events":
             self.handle_events()
             return
@@ -118,6 +157,9 @@ class WebClientHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
+        if not self.request_origin_allowed():
+            self.write_json({"ok": False, "message": "request origin is not allowed"}, status=HTTPStatus.FORBIDDEN)
+            return
         if parsed.path == "/api/request":
             self.handle_request()
             return
@@ -135,8 +177,10 @@ class WebClientHandler(BaseHTTPRequestHandler):
             if not isinstance(payload, dict):
                 raise ValueError("payload must be an object")
             if action == "bridge.config":
-                response = session.config()
+                response = {**session.config(), "locked": self.server.production}
             elif action == "bridge.config.update":
+                if self.server.production:
+                    raise PermissionError("server connection is fixed in production mode")
                 response = session.configure(str(payload.get("host", "")), int(payload.get("port", 0)))
             elif action == "bridge.state":
                 response = session.state_snapshot()
@@ -145,6 +189,16 @@ class WebClientHandler(BaseHTTPRequestHandler):
             self.write_json(response, session_id=session_id if created else None)
         except Exception as exc:
             self.write_json({"ok": False, "message": str(exc)}, status=HTTPStatus.BAD_REQUEST, session_id=session_id if created else None)
+
+    def handle_ready(self) -> None:
+        client = OchatClient(self.server.chat_host, self.server.chat_port)
+        try:
+            response = client.request("health", timeout=2)
+            self.write_json({"ok": True, "service": "ochat-web", "chat": response})
+        except Exception as exc:
+            self.write_json({"ok": False, "service": "ochat-web", "message": str(exc)}, status=HTTPStatus.SERVICE_UNAVAILABLE)
+        finally:
+            client.close()
 
     def handle_events(self) -> None:
         query = parse_qs(urlparse(self.path).query)
@@ -177,6 +231,7 @@ class WebClientHandler(BaseHTTPRequestHandler):
         content = target.read_bytes()
         content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
         self.send_response(HTTPStatus.OK)
+        self.send_security_headers()
         self.send_header("Content-Type", f"{content_type}; charset=utf-8" if content_type.startswith("text/") else content_type)
         self.send_header("Content-Length", str(len(content)))
         self.end_headers()
@@ -203,8 +258,16 @@ class WebClientHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         if length <= 0:
             return {}
+        if length > self.server.max_body_bytes:
+            raise ValueError("request body too large")
         data = self.rfile.read(length)
         return json.loads(data.decode("utf-8"))
+
+    def request_origin_allowed(self) -> bool:
+        if not self.server.allowed_origins:
+            return True
+        origin = str(self.headers.get("Origin", "")).strip()
+        return not origin or origin in self.server.allowed_origins
 
     def write_json(
         self,
@@ -216,30 +279,73 @@ class WebClientHandler(BaseHTTPRequestHandler):
     ) -> None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
+        self.send_security_headers()
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
         if session_id:
-            self.send_header("Set-Cookie", f"ochat_web_session={session_id}; Path=/; SameSite=Lax")
+            self.send_header("Set-Cookie", self.session_cookie(session_id))
         if clear_session:
-            self.send_header("Set-Cookie", "ochat_web_session=; Path=/; Max-Age=0; SameSite=Lax")
+            self.send_header("Set-Cookie", self.session_cookie("", clear=True))
         self.end_headers()
         self.wfile.write(data)
+
+    def send_security_headers(self) -> None:
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+
+    def session_cookie(self, value: str, *, clear: bool = False) -> str:
+        parts = [f"ochat_web_session={value}", "Path=/", "SameSite=Lax", "HttpOnly"]
+        if clear:
+            parts.append("Max-Age=0")
+        if self.server.secure_cookies:
+            parts.append("Secure")
+        return "; ".join(parts)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the browser-based OCHAT client.")
-    parser.add_argument("--host", default="127.0.0.1", help="HTTP host for the web client")
-    parser.add_argument("--port", default=8080, type=int, help="HTTP port for the web client")
-    parser.add_argument("--chat-host", default="127.0.0.1", help="OCHAT TCP server host")
-    parser.add_argument("--chat-port", default=8765, type=int, help="OCHAT TCP server port")
+    parser.add_argument("--host", default=os.getenv("OCHAT_WEB_HOST"), help="HTTP host for the web client")
+    parser.add_argument("--lan", action="store_true", default=env_bool("OCHAT_WEB_LAN"), help="listen on all network interfaces for LAN browsers")
+    parser.add_argument("--port", default=int(os.getenv("OCHAT_WEB_PORT", str(DEFAULT_WEB_PORT))), type=int, help="HTTP port for the web client")
+    parser.add_argument("--chat-host", default=os.getenv("OCHAT_CHAT_HOST", DEFAULT_CHAT_HOST), help="OCHAT TCP server host")
+    parser.add_argument("--chat-port", default=int(os.getenv("OCHAT_CHAT_PORT", str(DEFAULT_CHAT_PORT))), type=int, help="OCHAT TCP server port")
+    parser.add_argument("--production", action="store_true", default=env_bool("OCHAT_PRODUCTION"), help="lock down browser-facing behavior for deployment")
+    parser.add_argument("--allowed-origin", action="append", default=env_list("OCHAT_ALLOWED_ORIGINS"), help="allowed browser Origin for POST requests; can be repeated")
+    parser.add_argument("--secure-cookies", action="store_true", default=env_bool("OCHAT_SECURE_COOKIES"), help="add Secure to browser session cookies")
+    parser.add_argument("--max-body-mb", default=int(os.getenv("OCHAT_MAX_BODY_MB", "18")), type=int, help="maximum JSON request body size in MiB")
     return parser
+
+
+def print_access_hints(host: str, port: int) -> None:
+    hints = endpoint_hints(host, port, scheme="http")
+    print(f"OCHAT Web client local URL: {hints['local'][0]}", flush=True)
+    if hints["lan"]:
+        print("OCHAT Web client LAN URLs for other browsers:", flush=True)
+        for endpoint in hints["lan"]:
+            print(f"  {endpoint}", flush=True)
+    elif host == "0.0.0.0":
+        print("LAN mode is enabled, but no non-loopback IPv4 address was detected.", flush=True)
 
 
 def main() -> None:
     args = build_arg_parser().parse_args()
-    server = WebClientServer((args.host, args.port), args.chat_host, args.chat_port)
-    print(f"OCHAT Web client: http://{args.host}:{args.port}", flush=True)
+    host = resolve_bind_host(args.host, args.lan, DEFAULT_WEB_HOST)
+    server = WebClientServer(
+        (host, args.port),
+        args.chat_host,
+        args.chat_port,
+        production=args.production,
+        allowed_origins=set(args.allowed_origin),
+        secure_cookies=args.secure_cookies,
+        max_body_bytes=max(1, args.max_body_mb) * 1024 * 1024,
+    )
+    print(f"OCHAT Web client listening on {host}:{args.port}", flush=True)
+    print_access_hints(host, args.port)
     print(f"Proxying OCHAT server: {args.chat_host}:{args.chat_port}", flush=True)
+    if args.production:
+        print("Production mode: browser-side server reconfiguration is disabled.", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
