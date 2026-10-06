@@ -17,8 +17,10 @@ A2简介：关于java面向对象以及基本语法的学习，加上一个综�
 ##### 2、**类（对象类）**
 
 特殊的数据结构，有属性和行为。类只在计算机中加载一次。
+
 ```java
 public class User {//定义一个对象类，并且定义了对象的属性和行为
+    //user类
     private String name;
     private Integer age;
     private boolean gender;
@@ -26,11 +28,31 @@ public class User {//定义一个对象类，并且定义了对象的属性和�
     private String password;
     private Integer math;
     private Integer chinese;
+    public User(String name, Integer age, boolean gender,String email, String password,Integer math, Integer chinese)//一个初始化的方法
+    {
+        this.name = name;
+        this.age = age;
+        this.gender = gender;
+        this.email = email;
+        this.password = password;
+        this.math = math;
+        this.chinese = chinese;
+    }
     public void printAllScore(){//输出总成绩
         System.out.println("总成绩为："+(math+chinese));
     }
+    public void CheckVirus(){
+        for (int i=1; i<=7;i++){
+            System.out.println("%d/7",i);
+    }
+    System.out.println("病毒查杀完成"); 
+        
+    }
 }
+
 ```
+描述事物的类叫JavaBean类，可以写属性和行为，带有main方法的类叫做测试类
+
 ##### 3、封装对象与方法
 
 也把对象和对对象的处理封装到同一个类中，方便调用，节省代码量。
@@ -49,9 +71,10 @@ public static User insert(){
     user.setPassword("123456");
     user.setMath(100);
     user.setChinese(100);
-//   User user = new User("Rasion",20,true,"rasion@gmail.com","123456",100,100);
     return user;
 }
+//使用时User user = insert();  //调用insert方法，返回一个User对象
+
 public static void print(User user){//定义一个打印对象的方法
     System.out.println("Name: "+user.getName());
     System.out.println("Age: "+user.getAge());
@@ -99,13 +122,7 @@ public class User {
 public class main() {
     public static void main(String[] args) {
         User user = new User();//无参构造器返回对象
-        user.setName("Rasion");//传入数据给无参构造器对象
-        user.setAge(20);
-        user.setGender(true);
-        user.setEmail("rasion@gmail.com");
-        user.setPassword("123456");
-        user.setMath(100);
-        user.setChinese(100);
+        
         User s2 = new User("Rasion", 20, true, "rasion@gmail.com", "123456", 100, 100);
         //有参构造器返回对象,创建对象时，调用构造器，立即初始化对象。
     }
@@ -197,8 +214,7 @@ public class main(){
 ```java
 public class StaticAbout {//工具类
     //工具类没有创建对象的需求，建议讲工具类的构造器私有。
-    private StaticAbout() {
-    }
+    private StaticAbout() {}
     public static String getCode(int n) {//静态方法与工具类
         String code = "";
         for (int i = 0; i < n; i++) {
