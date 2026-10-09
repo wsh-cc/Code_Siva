@@ -272,14 +272,356 @@ public class Attention{
     }
 }
 ```
+##### 9.final修饰类、方法、变量
+```java
+1.final修饰的变量不能被修改//可以是数值也可以是地址，但地址对应的对象的内容可以被修改。
+2.常量名要大写，多个单词要用下划线隔开
+```
 
-#### （三）、综合实战
+#### (三)面向对象高级
 
-需求：展示系统中的全部电影信息(每部电影展示：名称、价格)，允许用户根据电影编号查询出某个电影的详细信息。
+##### 10.枚举类
 
-详细见A2.com.rasion.oop.demo的三个文件
+```
+public enum 枚举类名{
+	枚举项1，枚举项2，枚举项3;
+	属性;
+	行为;
+}
+```
 
-### 三、参考
+```java
+public enum Season {
+    SPRING("春天"),//等同于
+    SUMMER("夏天"),
+    AUTUMN("秋天"),
+    WINTER("冬天");
+//≈ public static final Season SPRING = new Season("春天");
+    
+    private String name;//season 有name这个属性
+    private Season(String name) {   // 构造方法，默认也是private，这样外界也就不能构造（new）了
+        this.name = name;
+    }//可以空构造，前面就是 spring() 了
 
-1. 学习主要链接来源于[[黑马程序员](https://www.bilibili.com/video/BV1gb42177hm?p=49&vd_source=2140b8696bb75ad7bd33e1195bf24372)]
-2.  其他可能用得上的链接
+    public String getName() {
+        return name;
+    }
+}
+
+public static void main(String[] args) {//test
+        Season season = Season.SUMMER;
+        // season.getSeason();输出夏天
+        System.out.println(season);//输出SUMMER,这是直接把对象
+    }
+```
+
+理解：
+
+```java
+SPRING("春天")
+≈ public static final Season SPRING = new Season("春天");
+
+"春天"
+   ↓
+Season(String name)
+   ↓
+this.name = name
+   ↓
+SPRING对象中的 name = "春天"
+```
+
+**记住：**
+
+- 枚举 = 对象数量固定的特殊类
+- 枚举常量 ≈ `public static final` 对象
+- 有参数 `SPRING("春天")` → 必须有对应构造方法
+- 没参数 `SPRING` → 可以不写构造方法
+- 枚举对象不能自己 `new`，直接用 `Season.SPRING`
+
+```
+values 和valueOf
+
+values()
+枚举类 → 所有枚举对象
+
+valueOf("名字")
+字符串 → 对应的枚举对象
+```
+
+##### **11.继承extends**
+
+###### 一、继承的基本特点
+
+- 使用 `extends` 实现继承。
+- 单继承：一个子类只能直接继承一个父类。
+- 多层继承：A → B → C。
+- 所有类直接或间接继承 `Object`。
+- 作用：代码复用、方法重写、实现多态。
+
+```java
+class Animal {
+    public void eat() {
+        System.out.println("吃东西");
+    }
+}
+
+class Dog extends Animal {}
+
+Dog dog = new Dog();
+dog.eat(); // 吃东西
+```
+
+###### 二、继承中的成员特点
+
+\1. 成员变量：**同名隐藏**
+
+```java
+class Father {
+    int age = 40;
+}
+
+class Son extends Father {
+    int age = 20;
+
+    void show() {
+        System.out.println(this.age);  // 20
+        System.out.println(super.age); // 40
+    }
+}
+```
+
+- `this.age`：从当前类开始查找成员变量。
+- `super.age`：从父类开始查找成员变量。
+- 成员变量不能重写，只能隐藏。
+
+\2. 成员方法：可以重写
+
+```java
+class Father {
+    public void show() {
+        System.out.println("父类");
+    }
+}
+
+class Son extends Father {
+    @Override
+    public void show() {
+        System.out.println("子类");
+    }
+
+    void test() {
+        this.show();  // 子类
+        super.show(); // 父类
+    }
+}
+```
+
+- **`@Override`：**标识方法重写。
+- **`private`、`final` 方法不能重写。**
+- `static` 方法只能隐藏，不能重写。
+
+\3. 构造方法：不能继承
+
+```java
+class Father {
+    public Father() {
+        System.out.println("父类构造");
+    }
+}
+
+class Son extends Father {
+    public Son() {
+        super(); // 可省略
+        System.out.println("子类构造");
+    }
+}
+```
+
+执行 `new Son()`：
+
+```
+父类构造
+子类构造
+```
+
+- 创建子类对象时，先执行父类构造，再执行子类构造。
+- 子类构造方法**默认**调用 `super()`。
+- 父类没有可访问的无参构造时，需要指定合适的父类构造调用。
+
+###### 三、this 与 super
+
+| 作用     | this          | super          |
+| -------- | ------------- | -------------- |
+| 成员变量 | `this.name`   | `super.name`   |
+| 成员方法 | `this.show()` | `super.show()` |
+| 无参构造 | `this()`      | `super()`      |
+| 有参构造 | `this(参数)`  | `super(参数)`  |
+
+\1. this()：调用本类构造方法
+
+```java
+class Student {
+    public Student() {
+        this("张三");
+        System.out.println("无参构造");
+    }
+
+    public Student(String name) {
+        System.out.println(name);
+    }
+}
+```
+
+执行 `new Student()`：
+
+```
+张三
+无参构造
+```
+
+\2. super()：调用父类构造方法
+
+```java
+class Father {
+    public Father(int age) {
+        System.out.println(age);
+    }
+}
+
+class Son extends Father {
+    public Son() {
+        super(40);
+        System.out.println("子类构造");
+    }
+}
+```
+
+执行 `new Son()`：
+
+```
+40
+子类构造
+```
+
+###### 四、注意事项
+
+1. `this` 表示当前对象，`super` 用于访问父类成员或调用父类构造。
+2.    `this()` 调用本类构造，`super()` 调用父类构造。
+3. 一个构造方法不能同时显式调用 `this()` 和 `super()`。
+4. 构造方法不能循环调用。
+5. 传统写法中，`this()`、`super()` 必须位于构造方法第一条语句（Java 25 起有条件放宽）。
+6. 静态方法中不能使用 `this` 或 `super` 访问实例成员。
+
+###### 五、核心总结
+
+- 成员变量： 同名隐藏。
+- 成员方法： 可以重写。
+- 构造方法： 不能继承，先父后子。
+- this： 当前对象、本类构造。
+- super： 父类成员、父类构造。
+
+##### 12.四种权限修饰符
+
+| 修饰符       | 本类 | 同包 | 不同包子类 | 不同包其他类 |
+| ------------ | ---- | ---- | ---------- | ------------ |
+| `public`     | ✅    | ✅    | ✅          | ✅            |
+| `protected`  | ✅    | ✅    | ✅          | ❌            |
+| 默认（不写） | ✅    | ✅    | ❌          | ❌            |
+| `private`    | ✅    | ❌    | ❌          | ❌            |
+
+##### **13.多态**
+
+###### 一、多态的条件
+
+继承关系、方法重写、父类引用指向子类对象。
+
+```java
+class Father {
+    int age = 40;
+
+    public void show() {
+        System.out.println("父类");
+    }
+}
+
+class Son extends Father {
+    int age = 20;
+
+    @Override
+    public void show() {
+        System.out.println("子类");
+    }
+
+    public void play() {
+        System.out.println("玩游戏");
+    }
+}
+```
+
+###### 二、多态的成员访问特点
+
+```java
+Father f = new Son();
+
+System.out.println(f.age); // 40，变量看左边
+f.show();                  // 子类，重写方法看右边
+// f.play();               // 报错，父类没有该方法
+```
+
+- 成员变量：看引用类型。
+- 普通实例方法：编译看左边，运行看右边（发生重写时）。
+- static 方法：看引用类型，不参与重写。
+- 子类独有方法：父类引用不能直接调用。
+
+###### 三、向上转型与向下转型
+
+```java
+Father f = new Son(); // 向上转型，自动
+
+Son s = (Son) f;     // 向下转型，显式
+s.play();            // 调用子类独有方法
+```
+
+安全转换：
+
+```java
+if (f instanceof Son) {//向下转型，进行判断防止报错
+    Son s = (Son) f;
+    s.play();
+}
+```
+
+###### 四、多态的作用
+
+```java
+public static void test(Father f) {
+    f.show();
+}
+
+test(new Father()); // 父类
+test(new Son());    // 子类
+```
+
+一个方法可以接收不同子类对象，执行不同实现，提高扩展性。
+
+核心记忆：
+
+- 多态：`Father f = new Son();`//编译看左边，运行看右边
+
+  | 成员类型       | 判断规则               |
+  | -------------- | ---------------------- |
+  | 成员变量       | 编译、访问都看左边     |
+  | `static` 方法  | 看左边                 |
+  | 重写的实例方法 | 编译看左边，运行看右边 |
+
+- 向**上转型自动**，向下转型显式。
+
+- **变量和静态方法看左边。**
+
+- **重写的实例方法看右边。**
+
+- 子类独有方法需要向下转型才能通过父类引用调用。
+
+
+
+​    
