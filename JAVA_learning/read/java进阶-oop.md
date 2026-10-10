@@ -280,7 +280,7 @@ public class Attention{
 
 #### (三)面向对象高级
 
-##### 10.枚举类
+##### 1.枚举类enum
 
 ```
 public enum 枚举类名{
@@ -348,7 +348,7 @@ valueOf("名字")
 字符串 → 对应的枚举对象
 ```
 
-##### **11.继承extends**
+##### **2.继承extends**
 
 ###### 一、继承的基本特点
 
@@ -520,7 +520,7 @@ class Son extends Father {
 - this： 当前对象、本类构造。
 - super： 父类成员、父类构造。
 
-##### 12.四种权限修饰符
+##### 3.四种权限修饰符
 
 | 修饰符       | 本类 | 同包 | 不同包子类 | 不同包其他类 |
 | ------------ | ---- | ---- | ---------- | ------------ |
@@ -529,7 +529,7 @@ class Son extends Father {
 | 默认（不写） | ✅    | ✅    | ❌          | ❌            |
 | `private`    | ✅    | ❌    | ❌          | ❌            |
 
-##### **13.多态**
+##### **4.多态**
 
 ###### 一、多态的条件
 
@@ -622,6 +622,421 @@ test(new Son());    // 子类
 
 - 子类独有方法需要向下转型才能通过父类引用调用。
 
+##### 5.抽象类abstract
 
+###### 一、抽象类
 
-​    
+使用 `abstract` 修饰的类称为抽象类。
+
+- 不能直接 `new` 创建对象。
+- 可以有构造方法、成员变量、普通方法和抽象方法。
+- 抽象类不一定有抽象方法，但有抽象方法的类必须是抽象类。
+- 可以通过子类对象实现多态。
+
+###### 二、抽象方法
+
+使用 `abstract` 修饰、没有方法体的方法。
+
+```
+public abstract void eat();
+```
+
+- 只有方法声明，没有方法体。
+- 非抽象子类必须实现继承的所有抽象方法。
+- 抽象方法不能使用 `private`、`final`、`static` 修饰。
+
+###### 三、代码示例
+
+```java
+abstract class Animal {
+    String name;
+
+    public Animal(String name) {
+        this.name = name;
+    }
+
+    public abstract void eat(); // 抽象方法
+
+    public void sleep() {       // 普通方法
+        System.out.println("睡觉");
+    }
+}
+
+class Dog extends Animal {
+    public Dog(String name) {
+        super(name);
+    }
+
+    @Override//必须
+    public void eat() {
+        System.out.println(name + "吃骨头");
+    }
+}
+```
+
+调用：
+
+```java
+// Animal a = new Animal("动物"); // ❌ 抽象类不能实例化
+
+Animal a = new Dog("旺财"); // ✅ 多态
+a.eat();                   // 旺财吃骨头
+a.sleep();                 // 睡觉
+```
+
+###### 四、核心总结
+
+1. 抽象类：不能实例化，可以继承。
+2. 抽象方法：没有方法体，要求具体子类实现。
+3. 构造方法：抽象类可以有构造方法，供子类初始化时调用。
+4. 多态：抽象类引用可以指向具体子类对象。
+5. 主要作用：提取共性、约束子类行为、提高代码扩展性。
+
+一句话记忆：抽象类提供共同基础，抽象方法规定子类必须实现的功能。
+
+##### **6.接口**
+
+Java 接口（Interface）笔记
+
+###### 一、接口的基本概念
+
+接口使用 `interface` 定义，类通过 `implements` 实现接口，主要用于规定类的行为。
+
+```java
+interface Animal {
+    void eat();
+}
+
+class Dog implements Animal {
+    @Override
+    public void eat() {
+        System.out.println("吃骨头");
+    }
+}
+```
+
+###### 二、接口的特点
+
+1. 接口不能直接实例化，没有构造方法。
+2. 抽象方法默认由 `public abstract` 修饰。
+3. 成员变量默认由 `public static final` 修饰（常量）。
+4. 普通实现类必须实现所有尚未实现的抽象方法。
+5. 一个类可以实现多个接口。
+6. 接口之间可以多继承。
+7. Java 8 起支持 `default`、`static` 方法；Java 9 起支持 `private` 方法。
+8. 接口里面的静态方法只能通过接口调用，不能用对象名。例：`inter.method()`
+
+###### 三、接口的成员
+
+```java
+interface Animal {
+    int AGE = 10; // public static final
+
+    void eat();   // public abstract
+
+    default void sleep() {
+        System.out.println("睡觉");
+    }
+
+    static void info() {
+        System.out.println("动物接口");
+    }
+}
+```
+
+调用：
+
+```java
+Animal a = new Dog();
+
+a.eat();            // 实现类的方法
+a.sleep();          // 接口默认方法
+Animal.info();      // 接口静态方法
+System.out.println(Animal.AGE); // 10
+```
+
+###### 四、接口的多实现
+
+```java
+interface Fly {
+    void fly();
+}
+
+interface Swim {
+    void swim();
+}
+
+class Duck implements Fly, Swim {
+    @Override
+    public void fly() {
+        System.out.println("飞行");
+    }
+
+    @Override
+    public void swim() {
+        System.out.println("游泳");
+    }
+}
+```
+
+###### 五、接口多态
+
+接口引用可以指向实现类对象。
+
+```
+Animal a = new Dog();
+a.eat(); // 执行 Dog 实现的 eat()
+```
+
+- 编译看左边：检查接口中是否声明了可调用的方法。
+- 运行看右边：执行实际对象对应的方法实现。
+- 实现类独有的方法不能通过接口引用直接调用。
+
+###### 六、接口与抽象类的区别
+
+| 对比     | 抽象类             | 接口                     |
+| -------- | ------------------ | ------------------------ |
+| 定义     | `abstract class`   | `interface`              |
+| 使用     | `extends`          | `implements`             |
+| 实例化   | 不可以             | 不可以                   |
+| 构造方法 | 有                 | 没有                     |
+| 成员变量 | 普通变量、常量     | 只能是常量               |
+| 方法     | 普通方法、抽象方法 | 抽象、default、static 等 |
+| 继承关系 | 类单继承           | 类可实现多个接口         |
+
+###### 七、核心总结
+
+- `interface`：定义接口。
+- `implements`：实现接口。
+- 接口中的抽象方法默认是 `public abstract`。
+- 接口变量默认是 `public static final`。
+- 接口支持多实现、多继承。
+- 接口可通过 `default` 提供默认方法实现。
+- 接口支持多态：`Animal a = new Dog();`
+- 抽象类强调“是什么”，接口强调“能做什么”。
+
+#####   7.Java 接口的四种特殊方法
+
+一、默认方法（default）
+
+```java
+interface Animal {
+    default void eat() {
+        System.out.println("吃东西");
+    }
+}
+```
+
+- 使用 `default` 修饰，必须有方法体。
+- 实现类可以直接调用，也可以重写。
+- 主要作用：扩展接口功能，保持向后兼容性，避免修改已有实现类。
+
+二、静态方法（static）
+
+```java
+interface Animal {
+    static void info() {
+        System.out.println("动物接口");
+    }
+}
+
+// 调用
+Animal.info();
+```
+
+- 属于接口本身，通过 `接口名.方法名()` 调用。
+- 不被实现类继承，也不能被重写。
+- 主要用于定义与接口相关的工具方法。
+
+三、私有方法（private）
+
+```java
+interface Animal {
+    default void eat() {
+        check();
+    }
+
+    private void check() {
+        System.out.println("检查状态");
+    }
+}
+```
+
+- 只能在接口内部调用。
+- 不能被实现类直接访问或重写。
+- 主要用于接口内部实例方法的代码复用。
+
+四、私有静态方法（private static）
+
+```java
+interface Animal {
+    static void info() {
+        check();
+    }
+
+    private static void check() {
+        System.out.println("检查状态");
+    }
+}
+```
+
+- 只能在接口内部调用。
+- 不依赖实例，静态方法和默认方法都可以调用。
+- 主要用于接口内部公共逻辑的复用。
+
+五、四种方法对比
+
+| 方法             | 实现类能否直接调用 | 能否重写 |
+| ---------------- | ------------------ | -------- |
+| `default`        | ✅                  | ✅        |
+| `static`         | ❌                  | ❌        |
+| `private`        | ❌                  | ❌        |
+| `private static` | ❌                  | ❌        |
+
+六、核心总结
+
+- `default`：提供默认实现，扩展功能时兼容旧代码。
+- `static`：接口工具方法，通过接口名调用。
+- `private`：接口内部实例方法复用。
+- `private static`：接口内部静态逻辑复用。
+- Java 8：引入 `default`、`static` 接口方法。
+- Java 9：引入 `private`、`private static` 接口方法。
+
+重点：接口的 `default` 方法可以让已有实现类在不修改代码的情况下，获得新增的默认功能。
+
+##### 8.内部类
+
+Java 内部类（Inner Class）笔记
+
+###### 一、内部类的分类
+
+内部类：定义在另一个类内部的类，主要用于封装和代码组织。
+
+| 类型       | 特点                                 |
+| ---------- | ------------------------------------ |
+| 成员内部类 | 依赖外部类对象                       |
+| 静态嵌套类 | 使用 `static` 修饰，不依赖外部类对象 |
+| 局部内部类 | 定义在方法或代码块内部               |
+| 匿名内部类 | 没有显式类名，通常使用一次           |
+
+###### 二、成员内部类
+
+```java
+class Outer {
+    private int age = 20;
+
+    class Inner {
+        void show() {
+            System.out.println(age);
+        }
+    }
+}
+
+// 创建对象
+Outer outer = new Outer();
+Outer.Inner inner = outer.new Inner();
+inner.show(); // 20
+```
+
+- 可以直接访问外部类所有成员，包括 `private`。
+- 创建成员内部类对象通常需要外部类对象。
+
+###### 三、静态嵌套类
+
+```java
+class Outer {
+    static int count = 10;
+
+    static class Inner {
+        void show() {
+            System.out.println(count);
+        }
+    }
+}
+
+// 创建对象
+Outer.Inner inner = new Outer.Inner();
+inner.show(); // 10
+```
+
+- 不需要创建外部类对象。
+- 可以直接访问外部类静态成员。
+- 不能直接访问外部类实例成员。
+
+###### 四、局部内部类
+
+```java
+class Outer {
+    void test() {
+        int age = 20;
+
+        class Inner {
+            void show() {
+                System.out.println(age);
+            }
+        }
+
+        new Inner().show();
+    }
+}
+```
+
+- 定义在方法或代码块内部。
+- 只能在其作用域内使用。
+- 访问局部变量时，变量必须是 `final` 或 effectively final（赋值后不再修改）。
+
+###### 五、匿名内部类（重点）
+
+```java
+interface Animal {
+    void eat();
+}
+
+Animal a = new Animal() //注意Animal 是接口，不能创建实例
+	
+	{@Override
+    public void eat() {
+        System.out.println("吃东西");
+    }    //这个就是没有没名字的java类
+    
+};
+
+a.eat();
+```
+
+- 没有显式类名，创建对象时直接定义实现。
+- 常用于接口实现或类的继承。
+- `new Animal()` 并非直接实例化接口，而是创建匿名实现类的对象。
+
+###### 六、内部类访问同名变量
+
+```java
+class Outer {
+    int age = 40;
+
+    class Inner {
+        int age = 20;
+
+        void show() {
+            int age = 10;
+
+            System.out.println(age);            // 10
+            System.out.println(this.age);       // 20
+            System.out.println(Outer.this.age); // 40
+        }
+    }
+}
+```
+
+###### 七、核心总结
+
+- 成员内部类：`outer.new Inner()`。
+- 静态嵌套类：`new Outer.Inner()`。
+- 局部内部类：在方法内部定义和使用。
+- 匿名内部类：`new 接口名() { ... }`。
+- `this`：当前内部类对象。
+- `Outer.this`：关联的外部类对象。
+
+重点掌握：成员内部类的创建方式、匿名内部类、`Outer.this`。
+
+#### 四. API 应用程序编程接口 (Application Programming Interface)

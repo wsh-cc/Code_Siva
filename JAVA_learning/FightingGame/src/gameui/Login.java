@@ -57,7 +57,7 @@ public class Login {
                 System.out.println("用户名已经存在");
                 continue;
             }
-            System.out.println("请输入密码:");
+            System.out.print("请输入密码:");
             String password = sc.next();
             if (!checkpassword(password))
             {
@@ -86,7 +86,7 @@ public class Login {
             String name = sc.next();
             if(!Iscontain(name,List)){
                 System.out.println("用户未注册，请重新输入");
-                continue;
+                break;
             }
             if(Islock(name,List)) {
                 System.out.printf("%s已经锁定，请联系管理员1111-1111%n", name);
@@ -97,12 +97,15 @@ public class Login {
             String password = sc.next();
 
             String checkcode=c.generate();
-            System.out.print("请输入验证码:"+checkcode);
+            System.out.print("请输入验证码:"+checkcode+"  验证码: ");
             String code = sc.next();
             if(code.equals(checkcode))
             {
                 if(Isright(name,password,List)){
                     System.out.println("登录成功");
+                    //
+                    Fightinggame g = new Fightinggame();
+                    g.gameStart(name);
                     break;
                 }else{
                     System.out.println("密码错误");
