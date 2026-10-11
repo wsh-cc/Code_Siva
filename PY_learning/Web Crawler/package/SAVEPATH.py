@@ -16,5 +16,5 @@ def save_path_inDownload(file_name:str)->str:
     """
     
     """
-    current_file_path = r"D:\Python_code\Web Crawler\Download"
+    current_file_path = r"D:\CODE\Web Crawler\Download"
     return path.join(current_file_path, file_name)
